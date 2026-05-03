@@ -13,7 +13,7 @@ pydantic-settings==2.6.1
 python-dotenv==1.0.1
 
 # ===== HTTP Clients =====
-httpx==0.28.1
+httpx==0.27.2
 requests==2.32.3
 
 # ===== LLM (Anthropic) =====
@@ -60,7 +60,7 @@ pytest==8.3.4
 pytest-asyncio==0.24.0
 pytest-cov==6.0.0
 pytest-mock==3.14.0
-httpx==0.28.1  # déjà listé, doublon volontaire
+httpx==0.27.2  # déjà listé, doublon volontaire
 faker==33.1.0
 
 # ===== Dev tools =====
