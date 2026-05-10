@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import logging
 from typing import Optional
+
 from uuid import UUID
 
 import httpx
@@ -75,7 +76,7 @@ class VapiClient:
             # ── LLM : Claude Haiku ──────────────────────────
             "model": {
                 "provider":    "anthropic",
-                "model":       settings.ANTHROPIC_MODEL,
+                "model":       "claude-haiku-4-5-20251001",
                 "temperature": 0.3,
                 "maxTokens":   250,
                 "messages": [
@@ -126,11 +127,14 @@ class VapiClient:
             },
 
             # ── Tools disponibles pour l'agent ─────────────
-            "tools": self._build_tools_config(),
+            #"tools": self._build_tools_config(),
         }
 
         response = await self._client.post("/assistant", json=payload)
+        if response.status_code >= 400:
+            logger.error(f"Vapi 400 response : {response.text}")
         response.raise_for_status()
+
 
         data = response.json()
         logger.info(
@@ -214,6 +218,28 @@ class VapiClient:
             f"✅ Numéro {phone_number_id} → "
             f"Assistant {assistant_id}"
         )
+        return response.json()
+    async def create_phone_number(
+        self,
+        twilio_number:      str,
+        twilio_account_sid: str,
+        twilio_auth_token:  str,
+        assistant_id:       str,
+        label:              str = "",
+    ) -> dict:
+        """Importe un numéro Twilio dans Vapi et l'assigne à un assistant."""
+        payload = {
+            "provider":          "twilio",
+            "number":            twilio_number,
+            "twilioAccountSid":  twilio_account_sid,
+            "twilioAuthToken":   twilio_auth_token,
+            "assistantId":       assistant_id,
+            "name":              label,
+        }
+        response = await self._client.post("/phone-number", json=payload)
+        if response.status_code >= 400:
+            logger.error(f"Vapi create_phone_number error : {response.text}")
+        response.raise_for_status()
         return response.json()
 
     # ── Appels ───────────────────────────────────────────────

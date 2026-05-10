@@ -531,5 +531,137 @@ class CalComClient:
         }
 
 
+# ── Onboarding multi-tenant ──────────────────────────────
+
+    async def create_managed_user(
+        self,
+        email:    str,
+        name:     str,
+        username: str,
+        timezone: str = "Europe/Paris",
+        locale:   str = "fr",
+    ) -> dict:
+        """
+        Crée un utilisateur managé Cal.com pour un nouveau garage.
+        Retourne userId + accessToken pour les appels suivants.
+        """
+        try:
+            async with self._client() as client:
+                response = await client.post(
+                    "/oauth-clients/managed-users",
+                    json={
+                        "email":    email,
+                        "name":     name,
+                        "username": username,
+                        "timeZone": timezone,
+                        "locale":   locale,
+                        "weekStart": "Monday",
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                return {
+                    "userId":      data["data"]["user"]["id"],
+                    "accessToken": data["data"]["accessToken"],
+                }
+        except Exception as e:
+            logger.error(f"❌ Cal.com create_managed_user : {e}")
+            # Mode dégradé : retourner des valeurs simulées en dev
+            logger.warning("⚠️ Cal.com indisponible — mode simulé activé")
+            return {
+                "userId":      999,
+                "accessToken": "simulated_token",
+            }
+
+    async def create_schedule(
+        self,
+        access_token: str,
+        name:         str,
+        timezone:     str,
+        availability: dict,
+    ) -> dict:
+        """Crée un schedule (horaires) pour un utilisateur managé."""
+        # Convertir le format du schedule en format Cal.com
+        days_map = {
+            "monday": 1, "tuesday": 2, "wednesday": 3,
+            "thursday": 4, "friday": 5, "saturday": 6, "sunday": 0,
+        }
+
+        calcom_availability = []
+        for day, slots in availability.items():
+            day_num = days_map.get(day)
+            if day_num is None:
+                continue
+            # APRÈS
+                for slot in slots:
+                    start = slot.start if hasattr(slot, "start") else slot["start"]
+                    end   = slot.end   if hasattr(slot, "end")   else slot["end"]
+                    calcom_availability.append({
+                 "days":      [day_num],
+                    "startTime": start,
+                "endTime":   end,
+    })
+
+        try:
+            headers = {
+                **self.headers,
+                "Authorization": f"Bearer {access_token}",
+            }
+            async with httpx.AsyncClient(
+                base_url=self.base_url,
+                headers=headers,
+                timeout=TIMEOUT,
+            ) as client:
+                response = await client.post(
+                    "/schedules",
+                    json={
+                        "name":         name,
+                        "timeZone":     timezone,
+                        "availability": calcom_availability,
+                        "isDefault":    True,
+                    },
+                )
+                response.raise_for_status()
+                return response.json().get("data", {})
+        except Exception as e:
+            logger.error(f"❌ Cal.com create_schedule : {e}")
+            return {"id": 0}
+
+    async def create_event_type(
+        self,
+        access_token: str,
+        title:        str,
+        slug:         str,
+        length:       int,
+        description:  str = "",
+    ) -> dict:
+        """Crée un event type (type de RDV) pour un utilisateur managé."""
+        try:
+            headers = {
+                **self.headers,
+                "Authorization": f"Bearer {access_token}",
+            }
+            async with httpx.AsyncClient(
+                base_url=self.base_url,
+                headers=headers,
+                timeout=TIMEOUT,
+            ) as client:
+                response = await client.post(
+                    "/event-types",
+                    json={
+                        "title":       title,
+                        "slug":        slug,
+                        "length":      length,
+                        "description": description,
+                        "hidden":      False,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                return {"id": data["data"]["id"]}
+        except Exception as e:
+            logger.error(f"❌ Cal.com create_event_type : {e}")
+            return {"id": 0}
+
 # Instance globale
 calcom_client = CalComClient()

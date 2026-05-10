@@ -45,10 +45,11 @@ ENV/
 .virtualenv/
 
 # ==========================================
-# IDEs
+# IDEs & outils locaux
 # ==========================================
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~

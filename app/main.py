@@ -5,11 +5,9 @@ Point d'entrée principal de l'application
 import logging
 from contextlib import asynccontextmanager
 
-import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
 from app.config import settings
 
 # ============================================================
@@ -69,6 +67,10 @@ app = FastAPI(
 )
 
 # ── CORS ─────────────────────────────────────────────────────
+# ── Tenant resolver ───────────────────────────────────────
+from app.middleware.tenant_resolver import TenantResolverMiddleware
+app.add_middleware(TenantResolverMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.APP_FRONTEND_URL, settings.APP_BASE_URL],
@@ -85,31 +87,23 @@ app.add_middleware(
 # ── Health check ─────────────────────────────────────────────
 @app.get("/health", tags=["monitoring"])
 async def health_check():
-    """Endpoint de santé pour Google Cloud Run."""
-    return {
-        "status":  "healthy",
-        "env":     settings.APP_ENV,
-        "version": "1.0.0",
-    }
+    return {"status": "ok"}
 
 @app.get("/", tags=["monitoring"])
 async def root():
-    """Route racine."""
-    return {
-        "name":    "Voice Agent Garage API",
-        "status":  "running",
-        "version": "1.0.0",
-    }
-
+    return {"app": "Voice Agent Garage API", "version": "1.0.0"}
 
 # ── Webhooks Vapi ─────────────────────────────────────────────
 from app.api.webhooks import router as webhooks_router
 app.include_router(webhooks_router, prefix="/api")
 
-
 # ── Tools (appelés par l'agent Vapi) ─────────────────────────
 from app.api.tools import router as tools_router
 app.include_router(tools_router, prefix="/api")
+
+# ── Onboarding multi-tenant ───────────────────────────────────
+from app.api.onboarding import router as onboarding_router
+app.include_router(onboarding_router)
 
 
 # ============================================================

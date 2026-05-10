@@ -245,6 +245,64 @@ class PromptGenerator:
 prompt_generator = PromptGenerator()
 
 
+def generate_system_prompt(
+    garage_type: str,
+    garage_name: str,
+    agent_name: str,
+    phone: str,
+    address: Optional[str] = None,
+    city: Optional[str] = None,
+    owner_name: Optional[str] = None,
+    services: list = None,
+    schedule: dict = None,
+    calcom_username: Optional[str] = None,
+    transfer_phone: Optional[str] = None,
+    timezone: str = "Europe/Paris",
+) -> str:
+
+    # Convertir le schedule onboarding → format business_hours
+    # Onboarding : {"monday": [{"start": "08:00", "end": "18:00"}]}
+    # business_hours : {"monday": {"open": "08:00", "close": "18:00", "closed": False}}
+    business_hours = {}
+    for day, slots in (schedule or {}).items():
+        if slots:
+            business_hours[day] = {
+                "open":   slots[0].start if hasattr(slots[0], "start") else slots[0]["start"],
+                "close":  slots[0].end   if hasattr(slots[0], "end")   else slots[0]["end"],
+                "closed": False,
+            }
+        else:
+            business_hours[day] = {"closed": True}
+
+    garage_data = {
+        "garage_type":           garage_type,
+        "name":                  garage_name,
+        "agent_name":            agent_name,
+        "phone_number":          phone,
+        "address_street":        address or "",
+        "address_city":          city or "",
+        "email":                 "",
+        "transfer_phone_number": transfer_phone or "",
+        "business_hours":        business_hours,
+        "owner_name":            owner_name or "",
+        "timezone":              timezone,
+    }
+
+    # services peut être List[str] ou List[dict]
+    services_dicts = []
+    for s in (services or []):
+        if isinstance(s, str):
+            services_dicts.append({"name": s, "duration_minutes": 60})
+        else:
+            services_dicts.append(s)
+
+    return prompt_generator.generate(
+        garage_data=garage_data,
+        services=services_dicts,
+        custom_overrides={"CALCOM_USERNAME": calcom_username or ""},
+    )
+
+
 # ============================================================
 # UTILITAIRE : RÉCUPÉRER LE PROMPT D'UN GARAGE DEPUIS LA BDD
 # ============================================================
