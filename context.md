@@ -265,3 +265,25 @@ http://127.0.0.1:4040
 ---
 
 *Généré le 07/05/2026 — Fin de Phase 2*
+
+
+## ✅ Étape 10 — Multi-tenant (COMPLÈTE)
+
+### Fichiers créés/modifiés
+- `scripts/setup_multitenant_v1.sql` ✅ (exécuté en Supabase)
+- `app/services/__init__.py` ✅
+- `app/services/onboarding_service.py` ✅
+- `app/api/onboarding.py` ✅
+- `app/middleware/__init__.py` ✅
+- `app/middleware/tenant_resolver.py` ✅
+- `app/models/schemas.py` ✅ (OnboardingRequest, OnboardingResult ajoutés)
+- `app/integrations/calcom_client.py` ✅ (create_managed_user, create_schedule, create_event_type ajoutés)
+- `app/integrations/vapi_client.py` ✅ (create_phone_number ajouté, modèle corrigé)
+- `app/prompts/system_prompt.py` ✅ (conversion schedule onboarding corrigée)
+
+### Points à finir en production
+- Cal.com managé users → vérifier compatibilité plan
+- Twilio ↔ Vapi linking → activé seulement en APP_ENV=production
+- Upgrader compte Twilio pour numéros FR dédiés
+
+## ⏳ Étape 11 — Dashboard monitoring (À FAIRE)
