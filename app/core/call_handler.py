@@ -13,6 +13,8 @@ from app.models.schemas import (
     UrgencyLevel,
     VapiCallData,
 )
+from app.utils.datetime_fr import format_datetime_fr
+from app.utils.phone import normalize_phone, phones_match
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,22 @@ class CallHandler:
             f"caller={caller_phone} | "
             f"garage={garage_id}"
         )
+
+        # Idempotence : si Vapi rejoue le webhook, ne pas dupliquer l'appel
+        existing_call = (
+            self.db.table("calls")
+            .select("id, end_client_id")
+            .eq("vapi_call_id", vapi_call_id)
+            .limit(1)
+            .execute()
+        )
+        if existing_call.data:
+            logger.info(f"♻️ Appel {vapi_call_id} déjà enregistré, webhook ignoré")
+            return {
+                "call_id":         existing_call.data[0]["id"],
+                "is_known_client": existing_call.data[0].get("end_client_id") is not None,
+                "client_name":     None,
+            }
 
         # Rechercher si client existant
         existing_client = self._find_client_by_phone(
@@ -291,31 +309,62 @@ class CallHandler:
         vapi_call_id: str,
         garage_id:   UUID,
     ) -> dict:
-        """Recherche un RDV existant par téléphone."""
+        """
+        Recherche un RDV existant.
+        Sécurité : on cherche d'abord sur le numéro RÉEL de l'appelant
+        (caller ID), pas sur un numéro dicté — sinon n'importe qui peut
+        consulter/annuler le RDV d'un tiers.
+        """
         self._lazy_init()
 
-        phone  = parameters.get("phone_number", "")
-        result = (
-            self.db.table("appointments")
-            .select("id, scheduled_at, title, status, client_name")
-            .eq("garage_id", str(garage_id))
-            .eq("client_phone", phone)
-            .eq("status", "confirme")
-            .order("scheduled_at", desc=False)
-            .limit(1)
-            .execute()
-        )
+        caller_phone = self._get_caller_phone(vapi_call_id)
+        dictated     = normalize_phone(parameters.get("phone_number"))
 
-        if not result.data:
+        # Numéro de confiance : le caller ID en priorité
+        lookup_phones = []
+        if caller_phone:
+            lookup_phones.append(caller_phone)
+        # Numéro dicté accepté seulement si l'appel est en numéro masqué
+        if not caller_phone and dictated:
+            lookup_phones.append(dictated)
+
+        appt = None
+        for phone in lookup_phones:
+            result = (
+                self.db.table("appointments")
+                .select("id, scheduled_at, title, status, client_name, client_phone")
+                .eq("garage_id", str(garage_id))
+                .eq("client_phone", phone)
+                .eq("status", "confirme")
+                .order("scheduled_at", desc=False)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                appt = result.data[0]
+                break
+
+        if not appt:
+            if caller_phone and dictated and not phones_match(caller_phone, dictated):
+                # L'appelant cherche le RDV d'un autre numéro que le sien
+                return {
+                    "success": False,
+                    "message": (
+                        "Pour des raisons de sécurité, je ne peux consulter que les "
+                        "rendez-vous associés au numéro depuis lequel vous appelez. "
+                        "Je peux prendre un message pour que le garage vous rappelle, "
+                        "ou vous transférer. Que préférez-vous ?"
+                    ),
+                }
             return {
                 "success": False,
                 "message": (
-                    "Je ne trouve pas de rendez-vous associé à ce numéro. "
+                    "Je ne trouve pas de rendez-vous associé à votre numéro. "
                     "Souhaitez-vous en prendre un nouveau ?"
                 ),
             }
 
-        appt = result.data[0]
+        date_fr = format_datetime_fr(appt["scheduled_at"])
         return {
             "success":        True,
             "appointment_id": appt["id"],
@@ -323,7 +372,7 @@ class CallHandler:
             "title":          appt["title"],
             "message": (
                 f"J'ai trouvé votre rendez-vous : {appt['title']} "
-                f"prévu le {appt['scheduled_at']}. "
+                f"prévu le {date_fr}. "
                 f"Que souhaitez-vous faire ?"
             ),
         }
@@ -334,11 +383,17 @@ class CallHandler:
         vapi_call_id: str,
         garage_id:   UUID,
     ) -> dict:
-        """Modifie un RDV existant."""
+        """Modifie un RDV existant (après vérification de propriété)."""
         from app.integrations.calcom_client import calcom_client
 
         appointment_id  = parameters.get("appointment_id")
         new_scheduled_at = parameters.get("new_scheduled_at")
+
+        denied = self._check_appointment_ownership(
+            appointment_id, garage_id, vapi_call_id
+        )
+        if denied:
+            return denied
 
         result = await calcom_client.reschedule_booking(
             appointment_id=appointment_id,
@@ -358,11 +413,17 @@ class CallHandler:
         vapi_call_id: str,
         garage_id:   UUID,
     ) -> dict:
-        """Annule un RDV."""
+        """Annule un RDV (après vérification de propriété)."""
         from app.integrations.calcom_client import calcom_client
 
         appointment_id = parameters.get("appointment_id")
         reason         = parameters.get("reason", "Annulation client")
+
+        denied = self._check_appointment_ownership(
+            appointment_id, garage_id, vapi_call_id
+        )
+        if denied:
+            return denied
 
         result = await calcom_client.cancel_booking(
             appointment_id=appointment_id,
@@ -409,10 +470,11 @@ class CallHandler:
 
         # Envoyer SMS
         if client_phone:
+            date_fr = format_datetime_fr(appt.get("scheduled_at", ""))
             sms_body = (
                 f"✅ RDV confirmé !\n"
                 f"{appt.get('title', 'Rendez-vous')}\n"
-                f"📅 {appt.get('scheduled_at', '')}\n"
+                f"📅 {date_fr}\n"
                 f"📍 Garage\n"
                 f"À bientôt !"
             )
@@ -585,6 +647,87 @@ class CallHandler:
         }
 
     # ── Utilitaires ──────────────────────────────────────────
+
+    def _get_caller_phone(self, vapi_call_id: str) -> Optional[str]:
+        """Retourne le numéro réel de l'appelant (caller ID), normalisé E.164."""
+        self._lazy_init()
+        try:
+            result = (
+                self.db.table("calls")
+                .select("caller_phone")
+                .eq("vapi_call_id", vapi_call_id)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return normalize_phone(result.data[0].get("caller_phone"))
+        except Exception as e:
+            logger.warning(f"⚠️ Impossible de récupérer le caller ID : {e}")
+        return None
+
+    def _check_appointment_ownership(
+        self,
+        appointment_id: Optional[str],
+        garage_id:      UUID,
+        vapi_call_id:   str,
+    ) -> Optional[dict]:
+        """
+        Vérifie qu'un RDV appartient bien au garage courant ET à l'appelant.
+        Retourne None si tout est OK, sinon un dict de refus à renvoyer
+        tel quel à l'agent.
+        """
+        self._lazy_init()
+
+        if not appointment_id:
+            return {
+                "success": False,
+                "message": "Je n'ai pas la référence du rendez-vous. Pouvez-vous me redonner votre numéro ?",
+            }
+
+        result = (
+            self.db.table("appointments")
+            .select("id, garage_id, client_phone")
+            .eq("id", appointment_id)
+            .limit(1)
+            .execute()
+        )
+
+        if not result.data:
+            return {
+                "success": False,
+                "message": "Je ne retrouve pas ce rendez-vous. Souhaitez-vous que je prenne un message ?",
+            }
+
+        appt = result.data[0]
+
+        # Le RDV doit appartenir au garage courant (isolation multi-tenant)
+        if str(appt.get("garage_id")) != str(garage_id):
+            logger.error(
+                f"🚫 Tentative d'accès cross-tenant : RDV {appointment_id} "
+                f"n'appartient pas au garage {garage_id}"
+            )
+            return {
+                "success": False,
+                "message": "Je ne retrouve pas ce rendez-vous. Souhaitez-vous que je prenne un message ?",
+            }
+
+        # Le RDV doit appartenir à l'appelant (caller ID)
+        caller_phone = self._get_caller_phone(vapi_call_id)
+        if caller_phone and not phones_match(caller_phone, appt.get("client_phone")):
+            logger.warning(
+                f"🚫 Caller {caller_phone} tente de modifier le RDV "
+                f"{appointment_id} d'un autre numéro"
+            )
+            return {
+                "success": False,
+                "message": (
+                    "Pour des raisons de sécurité, seul le titulaire du rendez-vous "
+                    "peut le modifier depuis son numéro. Je peux prendre un message "
+                    "pour le garage, ou vous transférer. Que préférez-vous ?"
+                ),
+            }
+
+        return None
 
     def _find_client_by_phone(
         self,

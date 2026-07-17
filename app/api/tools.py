@@ -5,15 +5,18 @@ Chaque endpoint correspond à une fonction appelable par l'agent
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.config import settings
+from app.api.security import require_vapi_signature
 from app.core.call_handler import call_handler
-from app.integrations.vapi_client import verify_vapi_signature
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/tools", tags=["tools"])
+router = APIRouter(
+    prefix="/tools",
+    tags=["tools"],
+    dependencies=[Depends(require_vapi_signature)],
+)
 
 
 async def _get_context(request: Request) -> tuple[str, UUID]:

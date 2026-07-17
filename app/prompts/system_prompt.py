@@ -217,21 +217,26 @@ class PromptGenerator:
         """
         Génère le premier message que l'agent prononce
         quand il décroche l'appel.
+
+        Conformité (AI Act / CNIL) :
+        - annoncer qu'il s'agit d'un assistant vocal (IA), pas d'un humain
+        - mentionner l'enregistrement si celui-ci est activé
         """
+        from app.config import settings
+
         agent_name  = garage_data.get("agent_name", "Léa")
         garage_name = garage_data.get("name", "le garage")
-        garage_type = garage_data.get("garage_type", "mecanique_generale")
 
-        if garage_type == "depanneur_remorquage":
-            return (
-                f"Bonjour, je suis {agent_name} de {garage_name}. "
-                f"Comment puis-je vous aider ?"
-            )
-        else:
-            return (
-                f"Bonjour, je suis {agent_name} de {garage_name}. "
-                f"Comment puis-je vous aider ?"
-            )
+        recording_notice = (
+            " Cet appel peut être enregistré."
+            if settings.ENABLE_CALL_RECORDING
+            else ""
+        )
+
+        return (
+            f"Bonjour, je suis {agent_name}, l'assistante vocale de "
+            f"{garage_name}.{recording_notice} Comment puis-je vous aider ?"
+        )
 
     def invalidate_cache(self):
         """Vide le cache (utile après modification d'un template)."""

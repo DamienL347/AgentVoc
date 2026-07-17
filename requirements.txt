@@ -3,7 +3,10 @@
 # ==========================================
 
 # ===== Framework Web =====
-fastapi==0.115.5
+# fastapi >= 0.139 requis : streamlit 1.58 impose starlette 1.x,
+# incompatible avec fastapi 0.115 (app cassée si on mélange)
+fastapi==0.139.2
+starlette>=1.3.0
 uvicorn[standard]==0.32.1
 python-multipart==0.0.17
 
@@ -62,6 +65,11 @@ pytest-cov==6.0.0
 pytest-mock==3.14.0
 httpx==0.27.2  # déjà listé, doublon volontaire
 faker==33.1.0
+
+# ===== Dashboard (dashboard.py) =====
+streamlit==1.58.0
+plotly==6.7.0
+pandas==3.0.3
 
 # ===== Dev tools =====
 black==24.10.0

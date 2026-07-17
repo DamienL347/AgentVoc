@@ -315,8 +315,10 @@ class OnboardingService:
                 garage_name=req.name,
                 system_prompt=system_prompt,
                 first_message=(
-                    f"Bonjour, je suis {req.agent_name or 'Léa'} "
-                    f"du {req.name}. Comment puis-je vous aider ?"
+                    f"Bonjour, je suis {req.agent_name or 'Léa'}, "
+                    f"l'assistante vocale de {req.name}. "
+                    f"Cet appel peut être enregistré. "
+                    f"Comment puis-je vous aider ?"
                 ),
             )
             vapi_assistant_id = assistant["id"]

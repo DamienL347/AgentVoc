@@ -286,4 +286,32 @@ http://127.0.0.1:4040
 - Twilio ↔ Vapi linking → activé seulement en APP_ENV=production
 - Upgrader compte Twilio pour numéros FR dédiés
 
+## ✅ Correctifs sécurité & conformité (17/07/2026)
+
+- **Signature HMAC obligatoire** sur `/webhooks/vapi` ET `/tools/*` (avant : contournable en
+  omettant l'en-tête ; les tools ne vérifiaient rien) → `app/api/security.py` (dépendance
+  `require_vapi_signature`, fail-closed en production)
+- **Vérification caller ID** : `get_appointment_by_phone` cherche sur le numéro réel de
+  l'appelant ; `update/cancel_appointment` vérifient la propriété du RDV (garage + numéro)
+  → `_check_appointment_ownership()` dans call_handler
+- **Dates en français parlé** pour TTS et SMS → `app/utils/datetime_fr.py`
+  ("samedi 19 juillet à 14h30" au lieu de l'ISO brut)
+- **Normalisation téléphone E.164** → `app/utils/phone.py` (compare 06… et +336…)
+- **Conformité AI Act/CNIL** : first message = "l'assistante vocale de X. Cet appel peut être
+  enregistré." ; règle "ne jamais révéler l'IA" remplacée par transparence obligatoire
+- **Idempotence** : webhook call.started rejoué → pas de doublon en BDD
+- **Tests** : 19 tests unitaires dans `tests/unit/` (signature, dates, téléphones) — tous verts
+- **Fix environnement** : starlette 1.x avait cassé fastapi 0.115 (app ne démarrait plus) →
+  fastapi upgradé en 0.139.2, requirements.txt mis à jour (+ deps dashboard épinglées)
+
+### Reste à faire (sécurité)
+- Fallback Vapi/Twilio si backend down (rediriger vers le vrai numéro du garage)
+- Confirmation vocale (nom + date) avant annulation même pour le titulaire
+- Rappels J-1 SMS + rapport hebdo (features à forte valeur commerciale)
+
+## 📁 Portfolio commercial (17/07/2026)
+
+Dossier : `portfolio/` dans le projet AgentVoc
+(site vitrine agentlumy.com + 2 maquettes garages personnalisables + one-pager PDF)
+
 ## ⏳ Étape 11 — Dashboard monitoring (À FAIRE)

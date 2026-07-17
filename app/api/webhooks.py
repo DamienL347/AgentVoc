@@ -5,16 +5,19 @@ Reçoit et traite tous les événements d'appel
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.config import settings
+from app.api.security import require_vapi_signature
 from app.core.call_handler import call_handler
-from app.integrations.vapi_client import verify_vapi_signature
 from app.models.schemas import CallStatus
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+router = APIRouter(
+    prefix="/webhooks",
+    tags=["webhooks"],
+    dependencies=[Depends(require_vapi_signature)],
+)
 
 
 # ============================================================
@@ -22,30 +25,12 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 # ============================================================
 
 @router.post("/vapi")
-async def vapi_webhook(
-    request: Request,
-    x_vapi_signature: str = Header(None, alias="x-vapi-signature"),
-):
+async def vapi_webhook(request: Request):
     """
     Point d'entrée unique pour tous les événements Vapi.
     Vapi envoie ici : call.started, call.ended, function-call, etc.
+    La signature HMAC est exigée par le router (require_vapi_signature).
     """
-
-    # ── Récupérer le corps brut ──────────────────────────────
-    raw_body = await request.body()
-
-    # ── Vérifier la signature ────────────────────────────────
-    if x_vapi_signature:
-        is_valid = verify_vapi_signature(
-            payload=raw_body,
-            signature=x_vapi_signature,
-            secret=settings.VAPI_WEBHOOK_SECRET,
-        )
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Signature Vapi invalide",
-            )
 
     # ── Parser le JSON ───────────────────────────────────────
     try:
