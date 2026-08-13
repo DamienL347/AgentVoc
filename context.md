@@ -314,4 +314,154 @@ http://127.0.0.1:4040
 Dossier : `portfolio/` dans le projet AgentVoc
 (site vitrine agentlumy.com + 2 maquettes garages personnalisables + one-pager PDF)
 
-## ⏳ Étape 11 — Dashboard monitoring (À FAIRE)
+## ✅ Étape 11 — Dashboard monitoring (COMPLÈTE — 13/08/2026)
+
+`dashboard.py` (Streamlit) — `streamlit run dashboard.py`, port 8520.
+Validé contre les vraies données Supabase (5 appels, 2 RDV, 19 garages).
+
+### Corrections apportées (le dashboard ne pouvait pas fonctionner avant)
+- **Clé Supabase** : lisait `SUPABASE_SERVICE_KEY` (inexistant) → retombait sur la clé anon,
+  RLS renvoyait des tables vides. Corrigé en `SUPABASE_SERVICE_ROLE_KEY` (comme `app/config.py`).
+- **6 colonnes inexistantes** référencées : `calls.status` → `call_status` ;
+  `appointments.service_type` → `title` ; `notifications.type` → `channel` ;
+  `onboarding_logs.step_number`/`step_name` → `step`.
+- **Valeurs d'ENUM** : le code cherchait des valeurs anglaises (`missed`, `confirmed`,
+  `in_progress`) alors que les ENUMs Supabase sont **en français**
+  (`abandonne`, `confirme`, `pending`…). Table de libellés ajoutée en tête de fichier.
+- **Taux de conversion** : basé sur `call_status = 'rdv_pris'` (et non le simple ratio
+  RDV créés / appels, faussé par les décalages de période).
+
+### Ajouts
+- Filtre période étendu (7j / 30j / 90j / 1 an / tout l'historique) — les données seed
+  dataient de mai, l'ancien maximum de 90 jours affichait un dashboard vide.
+- Filtres garage + période pilotables par URL (`?garage=…&periode=…`) → vue partageable.
+- KPIs urgences / transferts, nature des demandes, taux d'annulation des RDV, RDV à venir.
+- Onglet Onboarding : graphique de fiabilité par étape (quelle étape échoue le plus).
+- Dates affichées en Europe/Paris, séries journalières sans trou.
+
+### ⚠️ Trous découverts pendant l'étape 11
+1. ✅ **CORRIGÉ** — La table `notifications` n'était jamais écrite (voir ci-dessous).
+2. ⏳ **Le schéma SQL n'est plus versionné.** `scripts/` ne contenait qu'un `.gitkeep` :
+   `setup_supabase_v2.sql`, `setup_multitenant_v1.sql` et `seed_data.sql` n'ont jamais été
+   commités et n'existent plus sur le disque. Le schéma des 10 tables n'existe QUE dans
+   Supabase. `scripts/dump_schema.py` est prêt mais **bloqué** : voir ci-dessous.
+3. **16 garages sur 19 sont en `onboarding_status = failed`** (échec à `buy_twilio_number`,
+   compte Twilio trial). À nettoyer avant la mise en production.
+4. Le projet Supabase gratuit **se met en pause après ~1 semaine d'inactivité** (arrivé en
+   août 2026 : le hostname disparaît même du DNS). Bloquant si un client appelle.
+
+## ✅ Traçabilité des notifications (14/08/2026)
+
+Avant : `call_handler` appelait `twilio_client.send_sms()` / Resend directement, sans rien
+écrire en base. Aucune preuve qu'une confirmation était partie (litige client), et le SID
+Twilio / l'id Resend étaient jetés puisque les clients ne retournaient qu'un booléen.
+
+- `app/integrations/send_result.py` — `SendResult(ok, provider_id, error)`, avec `__bool__`
+  pour rester compatible avec l'ancien contrat `if sms_sent:`.
+- Twilio et Resend retournent désormais un `SendResult` porteur du SID / de l'id.
+- `app/services/notification_service.py` — **passage obligé** de tout envoi sortant :
+  envoie puis écrit dans `notifications` (canal, destinataire, statut, sent_at, id
+  fournisseur, message d'erreur). L'écriture est encapsulée : un échec de traçabilité ne
+  casse jamais l'appel en cours.
+- Les 5 points d'envoi de `call_handler` passent par le service ; `_get_call_id()` rattache
+  chaque notification à l'appel qui l'a déclenchée. Plus aucun appel direct aux clients
+  Twilio/Resend en dehors du service (vérifié par grep).
+- 6 tests unitaires ajoutés (`tests/unit/test_notification_service.py`) — **25 tests verts**.
+- Validé en conditions réelles : insertion dans la vraie base Supabase puis nettoyage.
+
+## ✅ BUG BLOQUANT corrigé le 14/08/2026 — `get_garage_by_phone()`
+
+**Aucun appel entrant ne pouvait identifier son garage.** La fonction SQL utilisée par
+`app/middleware/tenant_resolver.py` échoue systématiquement :
+
+    ERROR 42703: column g.timezone does not exist
+
+Elle sélectionne `g.timezone` (n'a jamais existé) et `g.is_active` (la colonne réelle est
+`status`), et déclare `garage_type` en `text` alors que c'est un enum.
+
+Le bug était **invisible** : le middleware avale l'exception pour ne jamais bloquer un appel
+et se contente de logguer « Aucun garage trouvé ». Le multi-tenant était donc réputé
+« testé OK » alors que la résolution n'a jamais fonctionné. C'est l'export du schéma qui l'a
+révélé — argument de plus pour versionner le SQL.
+
+**Correctif appliqué** (`scripts/fix_get_garage_by_phone.sql`, exécuté dans le SQL Editor).
+Il accepte les garages `active` **et** `trial` (les garages onboardés démarrent en `trial` :
+filtrer sur « actif » seul les aurait tous exclus) et fige `search_path` (exigé par
+`SECURITY DEFINER`). Vérifié : le numéro `+14722383374` résout bien Garage Perrin Lyon Sud.
+
+**Garde-fou anti-régression** : `tests/integration/test_tenant_resolver_rpc.py` (3 tests)
+appelle la vraie RPC et vérifie les champs retournés — une colonne renommée en base fera
+désormais échouer les tests au lieu de casser silencieusement les appels.
+Suite complète : **28 tests verts** (25 unitaires + 3 intégration).
+
+⚠️ `scripts/schema.sql` a été réaligné sur la fonction corrigée : recréer la base à partir
+de ce fichier aurait sinon réintroduit le bug.
+
+### Deux réglages incomplets révélés par le test (à traiter avant le 1er client)
+- `calcom_event_type_id = 0` sur Garage Perrin → Cal.com n'est pas réellement rattaché,
+  la prise de RDV échouera (déjà connu : managed users à vérifier selon le plan Cal.com).
+- `transfer_sms_number = NULL` → aucune alerte SMS d'urgence ne partira pour ce garage
+  (`_handle_send_sms_alert` répond « Numéro d'alerte non configuré »).
+
+## ✅ Export du schéma SQL — FAIT (14/08/2026)
+
+`scripts/schema.sql` — 10 tables, 485 lignes, versionné. Le modèle de données ne vit plus
+uniquement dans Supabase.
+
+Deux chemins pour le régénérer :
+
+**A. Sans mot de passe (recommandé) — via le SQL Editor**
+1. Supabase → SQL Editor → New query → coller `scripts/export_schema.sql` → Run
+2. Le résultat tient dans une seule cellule `ddl` → « Download CSV »
+3. `venv\Scripts\python.exe scripts/csv_to_schema.py <fichier.csv>` → écrit `scripts/schema.sql`
+
+**B. Avec le mot de passe Postgres** — `scripts/dump_schema.py` fait tout en une commande.
+Le mot de passe n'est **jamais affiché** par Supabase : il faut le réinitialiser via
+*Project Settings* (bas de la barre latérale gauche, au-dessus de l'avatar — pas les réglages
+de compte) → section **Configuration** → **Database** → « Reset database password ».
+Puis `SUPABASE_DB_PASSWORD=…` dans `.env`.
+
+`scripts/dump_schema.py` et `scripts/export_schema.sql` produisent le même contenu :
+types, tables, contraintes, index, fonctions, triggers, vues, RLS + policies.
+
+**Blocage rencontré sur la voie B** : le mot de passe Postgres de `DATABASE_URL` est invalide
+(`password authentication failed for user "postgres"`). Il n'avait jamais été testé —
+l'application n'utilise que l'API REST, jamais la connexion directe. Le mot de passe
+contient par ailleurs des caractères (`@`, `]`) non URL-encodés qui cassent le parsing
+de l'URI.
+
+**Pour débloquer** : Supabase → Project Settings → Database → *Database password*
+(« Reset database password » si perdu), puis ajouter dans `.env` :
+
+    SUPABASE_DB_PASSWORD=<le mot de passe, tel quel, sans encodage>
+
+puis `venv\Scripts\python.exe scripts/dump_schema.py`.
+
+Note : le host direct `db.<ref>.supabase.co` ne résout qu'en **IPv6**. Sans IPv6, prendre
+la chaîne « Session pooler » (IPv4) et renseigner `SUPABASE_DB_HOST` / `SUPABASE_DB_USER`.
+
+## 🎨 Charte du dashboard (14/08/2026)
+
+`dashboard_theme.py` — tokens, CSS et composants ; `dashboard.py` ne contient que la logique.
+
+- Palette **carbone + ambre** alignée sur `portfolio/site/index.html` (le dashboard est un
+  outil AgentLumy, pas d'un garage client). Le violet d'origine ne correspondait à rien.
+- Les **couleurs de séries ne sont pas les couleurs de marque** : l'ambre `#ffb300` sert
+  d'accent d'interface uniquement. Les séries utilisent une palette validée
+  (`#c98500, #199e70, #3987e5, #d55181, #9085e9, #e66767`) : bande de luminosité, plancher
+  de chroma, séparation daltonisme (ΔE ≥ 8), contraste ≥ 3:1 sur la surface `#14171d`.
+  **L'ordre des couleurs est le mécanisme de sécurité CVD — ne pas permuter sans re-valider.**
+- Statuts (`good/warning/serious/critical`) réservés, jamais réutilisés comme série, et
+  toujours accompagnés d'une icône + d'un libellé (jamais la couleur seule).
+- Icônes SVG (Lucide) au lieu d'emojis ; tuiles KPI en HTML ; tableaux en `tabular-nums`.
+- Le **donut « Issue des appels » a été remplacé par une barre horizontale triée** : un donut
+  à 10 parts de valeurs proches est illisible (au-delà de 6 classes, le reste va dans « Autres »).
+- Responsive vérifié (desktop / tablette, pas de scroll horizontal), focus visible au clavier,
+  `prefers-reduced-motion` respecté.
+
+⚠️ Piège Streamlit : le HTML injecté via `st.markdown` doit tenir sur **une seule ligne sans
+indentation**, sinon le moteur Markdown transforme les lignes indentées de 4 espaces en blocs
+de code affichés tels quels. Et Streamlit **ne recharge pas les modules importés** : après une
+modification de `dashboard_theme.py`, redémarrer le serveur (un simple refresh ne suffit pas).
+
+## ⏳ Étape 12 — Optimisation (À FAIRE)

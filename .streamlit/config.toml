@@ -1,8 +1,10 @@
 [theme]
-primaryColor = "#7c3aed"
-backgroundColor = "#0f0f1a"
-secondaryBackgroundColor = "#1e1e2e"
-textColor = "#cdd6f4"
+# Charte AgentLumy : carbone + ambre (cf. portfolio/site/index.html)
+base = "dark"
+primaryColor = "#ffb300"
+backgroundColor = "#0b0d11"
+secondaryBackgroundColor = "#14171d"
+textColor = "#f2efe8"
 font = "sans serif"
 
 [server]
