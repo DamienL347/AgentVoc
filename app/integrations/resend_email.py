@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 
 from app.config import settings
+from app.integrations.send_result import SendResult
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +176,7 @@ class ResendEmailClient:
         subject: str,
         html:    str,
         text:    Optional[str] = None,
-    ) -> bool:
+    ) -> SendResult:
         """
         Envoie un email via Resend.
 
@@ -186,11 +187,11 @@ class ResendEmailClient:
             text    : Corps texte (fallback)
 
         Returns:
-            bool : True si envoyé avec succès
+            SendResult : truthy si envoyé ; porte l'id Resend pour la traçabilité
         """
         if not self.api_key:
             logger.warning("⚠️ Resend non configuré — email non envoyé")
-            return False
+            return SendResult.failure("Resend non configuré")
 
         if isinstance(to, str):
             to = [to]
@@ -214,17 +215,17 @@ class ResendEmailClient:
                 f"✅ Email envoyé | to={to} | "
                 f"subject='{subject}' | id={email_id}"
             )
-            return True
+            return SendResult.success(provider_id=email_id)
 
         except Exception as e:
             logger.error(f"❌ Erreur Resend send_email to={to} : {e}")
-            return False
+            return SendResult.failure(str(e))
 
     async def send_appointment_confirmation(
         self,
         to:              str,
         appointment:     dict,
-    ) -> bool:
+    ) -> SendResult:
         """
         Envoie l'email de confirmation de RDV au client.
 
@@ -234,7 +235,7 @@ class ResendEmailClient:
         """
         if not to or "@" not in to:
             logger.warning(f"⚠️ Email invalide : {to}")
-            return False
+            return SendResult.failure(f"Email destinataire invalide : {to}")
 
         # Récupérer les infos du garage
         garage_name    = appointment.get("garage_name", "le garage")
@@ -281,11 +282,11 @@ class ResendEmailClient:
         caller_phone: str,
         summary:      str,
         urgency:      str = "normale",
-    ) -> bool:
+    ) -> SendResult:
         """Envoie une alerte email au propriétaire du garage."""
 
         if not to or "@" not in to:
-            return False
+            return SendResult.failure(f"Email destinataire invalide : {to}")
 
         html = _build_alert_html(
             garage_name=garage_name,

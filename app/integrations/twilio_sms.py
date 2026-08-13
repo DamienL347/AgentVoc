@@ -4,6 +4,7 @@ Client Twilio — Envoi de SMS (confirmations + alertes urgences)
 import logging
 
 from app.config import settings
+from app.integrations.send_result import SendResult
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class TwilioSMSClient:
             self._client = Client(self.account_sid, self.auth_token)
         return self._client
 
-    async def send_sms(self, to: str, body: str) -> bool:
+    async def send_sms(self, to: str, body: str) -> SendResult:
         """
         Envoie un SMS.
 
@@ -36,17 +37,17 @@ class TwilioSMSClient:
             body : Contenu du message (max 160 chars recommandé)
 
         Returns:
-            bool : True si envoyé avec succès
+            SendResult : truthy si envoyé ; porte le SID Twilio pour la traçabilité
         """
         if not self.account_sid or not self.auth_token:
             logger.warning("⚠️ Twilio non configuré — SMS non envoyé")
-            return False
+            return SendResult.failure("Twilio non configuré")
 
         # Normaliser le numéro
         to = self._normalize_phone(to)
         if not to:
             logger.error(f"❌ Numéro invalide : {to}")
-            return False
+            return SendResult.failure("Numéro destinataire invalide")
 
         # Tronquer si trop long (max 1600 chars pour Twilio)
         if len(body) > 1600:
@@ -63,11 +64,11 @@ class TwilioSMSClient:
                 f"✅ SMS envoyé | to={to} | "
                 f"sid={message.sid} | status={message.status}"
             )
-            return True
+            return SendResult.success(provider_id=message.sid)
 
         except Exception as e:
             logger.error(f"❌ Erreur Twilio send_sms to={to} : {e}")
-            return False
+            return SendResult.failure(str(e))
 
     async def send_appointment_confirmation(
         self,
@@ -77,7 +78,7 @@ class TwilioSMSClient:
         scheduled_at_fr:  str,
         garage_name:      str,
         garage_phone:     str,
-    ) -> bool:
+    ) -> SendResult:
         """
         Envoie le SMS de confirmation de RDV au client.
         """
@@ -102,7 +103,7 @@ class TwilioSMSClient:
         location:     str,
         problem:      str,
         urgency:      str = "URGENT",
-    ) -> bool:
+    ) -> SendResult:
         """
         Envoie une alerte SMS urgence au patron du garage.
         """
@@ -124,7 +125,7 @@ class TwilioSMSClient:
         garage_name:  str,
         caller_phone: str,
         summary:      str,
-    ) -> bool:
+    ) -> SendResult:
         """
         Alerte SMS pour un appel avec message laissé.
         """

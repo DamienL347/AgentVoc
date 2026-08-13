@@ -444,8 +444,7 @@ class CallHandler:
         garage_id:   UUID,
     ) -> dict:
         """Envoie SMS + email de confirmation."""
-        from app.integrations.twilio_sms  import twilio_client
-        from app.integrations.resend_email import resend_client
+        from app.services.notification_service import notification_service
 
         client_phone   = parameters.get("client_phone")
         client_email   = parameters.get("client_email")
@@ -467,6 +466,7 @@ class CallHandler:
         appt      = appt_result.data
         sms_sent  = False
         mail_sent = False
+        call_id   = self._get_call_id(vapi_call_id)
 
         # Envoyer SMS
         if client_phone:
@@ -478,17 +478,24 @@ class CallHandler:
                 f"📍 Garage\n"
                 f"À bientôt !"
             )
-            sms_sent = await twilio_client.send_sms(
+            sms_sent = bool(await notification_service.send_sms(
                 to=client_phone,
                 body=sms_body,
-            )
+                garage_id=garage_id,
+                recipient_type="client",
+                call_id=call_id,
+                appointment_id=appointment_id,
+            ))
 
         # Envoyer email
         if client_email:
-            mail_sent = await resend_client.send_appointment_confirmation(
+            mail_sent = bool(await notification_service.send_appointment_confirmation_email(
                 to=client_email,
                 appointment=appt,
-            )
+                garage_id=garage_id,
+                call_id=call_id,
+                appointment_id=appointment_id,
+            ))
 
         return {
             "success":  True,
@@ -535,16 +542,19 @@ class CallHandler:
 
         # Envoyer alerte SMS si urgence ou réclamation
         if reason in ["urgence", "reclamation"] and garage.data:
-            from app.integrations.twilio_sms import twilio_client
+            from app.services.notification_service import notification_service
             sms_number = garage.data.get("transfer_sms_number")
             if sms_number:
-                await twilio_client.send_sms(
+                await notification_service.send_sms(
                     to=sms_number,
                     body=(
                         f"🚨 TRANSFERT [{reason.upper()}]\n"
                         f"Appel transféré vers vous.\n"
                         f"Résumé : {summary[:100]}"
                     ),
+                    garage_id=garage_id,
+                    recipient_type="garage",
+                    call_id=self._get_call_id(vapi_call_id),
                 )
 
         logger.info(
@@ -565,7 +575,7 @@ class CallHandler:
         garage_id:   UUID,
     ) -> dict:
         """Envoie une alerte SMS urgente au patron."""
-        from app.integrations.twilio_sms import twilio_client
+        from app.services.notification_service import notification_service
         self._lazy_init()
 
         priority = parameters.get("priority", "normale")
@@ -586,9 +596,12 @@ class CallHandler:
 
         emoji = {"critique": "🚨", "elevee": "⚠️", "normale": "📱"}.get(priority, "📱")
 
-        await twilio_client.send_sms(
+        await notification_service.send_sms(
             to=garage.data["transfer_sms_number"],
             body=f"{emoji} [{priority.upper()}] {garage.data['name']}\n{message}",
+            garage_id=garage_id,
+            recipient_type="garage",
+            call_id=self._get_call_id(vapi_call_id),
         )
 
         return {"success": True, "message": "Alerte envoyée."}
@@ -600,7 +613,7 @@ class CallHandler:
         garage_id:   UUID,
     ) -> dict:
         """Enregistre un message pour rappel."""
-        from app.integrations.twilio_sms import twilio_client
+        from app.services.notification_service import notification_service
         self._lazy_init()
 
         client_name  = parameters.get("client_name", "Client")
@@ -627,7 +640,7 @@ class CallHandler:
         )
 
         if garage.data and garage.data.get("transfer_sms_number"):
-            await twilio_client.send_sms(
+            await notification_service.send_sms(
                 to=garage.data["transfer_sms_number"],
                 body=(
                     f"📝 MESSAGE\n"
@@ -635,6 +648,9 @@ class CallHandler:
                     f"Message : {message[:150]}\n"
                     f"→ À rappeler dès que possible"
                 ),
+                garage_id=garage_id,
+                recipient_type="garage",
+                call_id=self._get_call_id(vapi_call_id),
             )
 
         return {
@@ -647,6 +663,26 @@ class CallHandler:
         }
 
     # ── Utilitaires ──────────────────────────────────────────
+
+    def _get_call_id(self, vapi_call_id: str) -> Optional[str]:
+        """
+        Traduit l'id d'appel Vapi en UUID interne (`calls.id`).
+        Sert à rattacher les notifications à l'appel qui les a déclenchées.
+        """
+        self._lazy_init()
+        try:
+            result = (
+                self.db.table("calls")
+                .select("id")
+                .eq("vapi_call_id", vapi_call_id)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return result.data[0]["id"]
+        except Exception as e:
+            logger.warning(f"⚠️ Impossible de résoudre call_id pour {vapi_call_id} : {e}")
+        return None
 
     def _get_caller_phone(self, vapi_call_id: str) -> Optional[str]:
         """Retourne le numéro réel de l'appelant (caller ID), normalisé E.164."""
