@@ -43,10 +43,20 @@ class VapiClient:
     def __init__(self):
         self.base_url = VAPI_BASE_URL
         self.headers  = DEFAULT_HEADERS
+
+        # En PROVIDER_MODE=fake : ni assistant ni numéro réellement créés chez Vapi
+        # (l'achat d'un numéro est l'appel qui coûte de l'argent).
+        transport = None
+        if settings.use_fake_providers:
+            from app.integrations.fake_transport import vapi_transport
+            logger.warning("⚠️ Vapi SIMULÉ (PROVIDER_MODE=fake) — aucun assistant ni numéro réel")
+            transport = vapi_transport()
+
         self._client  = httpx.AsyncClient(
             base_url=self.base_url,
             headers=self.headers,
             timeout=TIMEOUT,
+            transport=transport,
         )
 
     async def close(self):

@@ -464,4 +464,53 @@ indentation**, sinon le moteur Markdown transforme les lignes indentées de 4 es
 de code affichés tels quels. Et Streamlit **ne recharge pas les modules importés** : après une
 modification de `dashboard_theme.py`, redémarrer le serveur (un simple refresh ne suffit pas).
 
+## ✅ Mode fournisseurs simulés — PROVIDER_MODE (14/08/2026)
+
+Permet de valider **tout le produit sans compte payant** : ni numéro Twilio FR, ni plan
+Cal.com plateforme, ni crédits consommés.
+
+    PROVIDER_MODE=fake   # dans .env — Twilio, Cal.com, Vapi et Resend simulés
+    PROVIDER_MODE=real   # bascule vers le réel, aucun autre changement de code
+
+**Principe : la simulation se fait au niveau du transport HTTP**, jamais au niveau métier.
+Le vrai code continue de tourner (normalisation des numéros, construction des messages,
+parsing et formatage FR des créneaux, gestion d'erreurs) ; seul l'aller-retour réseau est
+feint. Un mock posé sur les méthodes métier ne testerait plus que le mock.
+
+Règle à tenir : **le simulateur ne doit jamais être plus permissif que l'API réelle.**
+Il reproduit la structure de réponse v2 de Cal.com à l'identique — c'est précisément ce
+qui a fait apparaître le bug d'enveloppe `data` ci-dessous.
+
+Implémentation : `app/integrations/fake_transport.py`. `SENT_LOG` journalise tout ce qui
+« serait parti » (SMS, emails, réservations, achats de numéro) — le harnais de test peut
+vérifier qu'un SMS est bien parti sans qu'aucun SMS ne parte.
+
+## 🔴 Deux bugs Cal.com trouvés grâce au mode simulé (14/08/2026)
+
+Tous deux échouaient **en silence, vers un repli** — jamais d'erreur visible.
+
+**1. `create_booking` envoyait `calcom_user_id` dans le champ `eventTypeId`.**
+Mauvaise colonne (vide sur tous les garages) et confusion entre « user id » et
+« event type id ». Cal.com refusait, on repliait en base locale : **le RDV n'existait dans
+aucun agenda pendant que l'agent annonçait « votre rendez-vous est confirmé »**. Le client
+raccroche confiant, le garagiste n'a rien. C'est le défaut qui aurait le plus abîmé la
+prestation. Corrigé : lecture de `calcom_event_type_id`, avec court-circuit explicite quand
+l'agenda n'est pas rattaché (`0` est traité comme une absence, pas comme un identifiant).
+
+**2. Les réponses de l'API v2 sont encapsulées sous `data`, le code lisait à la racine.**
+`calcom_uid` revenait donc vide : le RDV devenait impossible à modifier ou annuler ensuite,
+alors que tout semblait avoir réussi. Corrigé pour les créneaux et les réservations.
+
+⚠️ Conséquence à garder en tête : tant qu'un garage n'a pas de `calcom_event_type_id`
+valide, `check_availability` propose des **créneaux de repli inventés**, absents de tout
+agenda. Ils sont marqués `is_fallback: true` — à rendre visible dans le dashboard.
+
+Tests : `tests/unit/test_calcom_parsing.py` (6 tests). Suite complète : **34 tests verts**.
+
+## ✅ .env.example recréé (14/08/2026)
+
+Il avait disparu comme les scripts SQL. Sans lui, impossible de savoir quelles variables
+sont requises — bloquant pour le déploiement Cloud Run. Reconstruit depuis `app/config.py`,
+sans aucun secret.
+
 ## ⏳ Étape 12 — Optimisation (À FAIRE)

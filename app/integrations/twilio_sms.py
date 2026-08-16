@@ -22,10 +22,20 @@ class TwilioSMSClient:
         self._client      = None
 
     def _get_client(self):
-        """Initialisation lazy du client Twilio."""
+        """
+        Initialisation lazy du client Twilio.
+        En PROVIDER_MODE=fake, on substitue un client factice : toute la logique
+        de send_sms (normalisation, troncature, SendResult) reste exercée, seul
+        l'envoi réel — et facturé — est neutralisé.
+        """
         if self._client is None:
-            from twilio.rest import Client
-            self._client = Client(self.account_sid, self.auth_token)
+            if settings.use_fake_providers:
+                from app.integrations.fake_transport import FakeTwilioClient
+                logger.warning("⚠️ Twilio SIMULÉ (PROVIDER_MODE=fake) — aucun SMS réel")
+                self._client = FakeTwilioClient()
+            else:
+                from twilio.rest import Client
+                self._client = Client(self.account_sid, self.auth_token)
         return self._client
 
     async def send_sms(self, to: str, body: str) -> SendResult:
@@ -39,7 +49,7 @@ class TwilioSMSClient:
         Returns:
             SendResult : truthy si envoyé ; porte le SID Twilio pour la traçabilité
         """
-        if not self.account_sid or not self.auth_token:
+        if not settings.use_fake_providers and (not self.account_sid or not self.auth_token):
             logger.warning("⚠️ Twilio non configuré — SMS non envoyé")
             return SendResult.failure("Twilio non configuré")
 

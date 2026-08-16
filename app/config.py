@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     GCP_SERVICE_NAME:      str = "voice-agent-garage-api"
     GCP_ARTIFACT_REGISTRY: str = "europe-west1-docker.pkg.dev"
 
+    # ── Mode fournisseurs ────────────────────────────────────
+    # "real" = vrais appels API (nécessite les comptes payants)
+    # "fake" = fournisseurs simulés au niveau HTTP : permet de valider tout le
+    #          produit sans numéro Twilio FR, sans plan Cal.com et sans crédits.
+    #          Voir app/integrations/fake_transport.py
+    PROVIDER_MODE: str = "real"
+
     # ── Feature Flags ────────────────────────────────────────
     ENABLE_URGENCY_DETECTION:      bool = True
     ENABLE_CALL_RECORDING:         bool = True
@@ -97,6 +104,11 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.APP_ENV == "development"
+
+    @property
+    def use_fake_providers(self) -> bool:
+        """Fournisseurs externes simulés (aucun appel réseau, aucun coût)."""
+        return self.PROVIDER_MODE.lower() == "fake"
 
 
 @lru_cache

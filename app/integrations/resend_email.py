@@ -163,11 +163,20 @@ class ResendEmailClient:
         self._client    = None
 
     def _get_client(self):
-        """Initialisation lazy du client Resend."""
+        """
+        Initialisation lazy du client Resend.
+        En PROVIDER_MODE=fake, module factice : le HTML est bien construit et
+        journalisé, mais aucun email ne part.
+        """
         if self._client is None:
-            import resend
-            resend.api_key = self.api_key
-            self._client   = resend
+            if settings.use_fake_providers:
+                from app.integrations.fake_transport import FakeResendModule
+                logger.warning("⚠️ Resend SIMULÉ (PROVIDER_MODE=fake) — aucun email réel")
+                self._client = FakeResendModule
+            else:
+                import resend
+                resend.api_key = self.api_key
+                self._client   = resend
         return self._client
 
     async def send_email(
@@ -189,7 +198,7 @@ class ResendEmailClient:
         Returns:
             SendResult : truthy si envoyé ; porte l'id Resend pour la traçabilité
         """
-        if not self.api_key:
+        if not settings.use_fake_providers and not self.api_key:
             logger.warning("⚠️ Resend non configuré — email non envoyé")
             return SendResult.failure("Resend non configuré")
 

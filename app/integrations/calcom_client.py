@@ -57,10 +57,18 @@ class CalComClient:
         }
 
     def _client(self) -> httpx.AsyncClient:
+        # En PROVIDER_MODE=fake, un transport factice répond à la place du réseau :
+        # le parsing des créneaux et le formatage FR restent le vrai code.
+        transport = None
+        if settings.use_fake_providers:
+            from app.integrations.fake_transport import calcom_transport
+            transport = calcom_transport()
+
         return httpx.AsyncClient(
             base_url=self.base_url,
             headers=self.headers,
             timeout=TIMEOUT,
+            transport=transport,
         )
 
     # ── Disponibilités ───────────────────────────────────────
@@ -84,14 +92,24 @@ class CalComClient:
 
         garage = (
             db.table("garages")
-            .select("calcom_user_id, name")
+            .select("calcom_event_type_id, calcom_username, calcom_user_id, name")
             .eq("id", str(garage_id))
             .single()
             .execute()
         )
 
-        if not garage.data or not garage.data.get("calcom_user_id"):
-            logger.error(f"❌ calcom_user_id manquant pour garage {garage_id}")
+        # L'agenda se cible par event type. `calcom_event_type_id = 0` signifie
+        # « onboarding Cal.com incomplet » : c'est une absence, pas un identifiant.
+        event_type_id = (garage.data or {}).get("calcom_event_type_id") or None
+        username      = (garage.data or {}).get("calcom_username") \
+                        or (garage.data or {}).get("calcom_user_id")
+
+        if not garage.data or not (event_type_id or username):
+            logger.error(
+                f"❌ Agenda Cal.com non rattaché pour garage {garage_id} "
+                f"(calcom_event_type_id et calcom_username absents) — "
+                f"créneaux de repli proposés, ILS NE SONT PAS DANS L'AGENDA DU GARAGE"
+            )
             return self._fallback_slots(service_type, preferred_slot)
 
         # Calculer la plage de dates
@@ -104,18 +122,20 @@ class CalComClient:
             SERVICE_DURATIONS["default"]
         )
 
+        params = {
+            "startTime": start_date.isoformat(),
+            "endTime":   end_date.isoformat(),
+            "duration":  duration,
+            "timeZone":  "Europe/Paris",
+        }
+        if event_type_id:
+            params["eventTypeId"] = event_type_id
+        else:
+            params["username"] = username
+
         try:
             async with self._client() as client:
-                response = await client.get(
-                    "/slots/available",
-                    params={
-                        "startTime":   start_date.isoformat(),
-                        "endTime":     end_date.isoformat(),
-                        "username":    garage.data["calcom_user_id"],
-                        "duration":    duration,
-                        "timeZone":    "Europe/Paris",
-                    },
-                )
+                response = await client.get("/slots/available", params=params)
                 response.raise_for_status()
                 data = response.json()
 
@@ -139,8 +159,9 @@ class CalComClient:
         """Parse la réponse Cal.com et formate les créneaux."""
         slots = []
 
-        # La réponse Cal.com est structurée par date
-        slots_by_date = data.get("slots", {})
+        # L'API v2 encapsule tout sous `data` ; on reste tolérant à une réponse à plat.
+        body          = data.get("data", data) if isinstance(data, dict) else {}
+        slots_by_date = body.get("slots", data.get("slots", {}))
 
         # Filtrage par préférence horaire
         pref_hours = None
@@ -250,7 +271,7 @@ class CalComClient:
         # Récupérer les infos du garage
         garage = (
             db.table("garages")
-            .select("calcom_user_id, name")
+            .select("calcom_event_type_id, calcom_username, calcom_user_id, name")
             .eq("id", str(garage_id))
             .single()
             .execute()
@@ -261,6 +282,9 @@ class CalComClient:
                 "success": False,
                 "message": "Configuration agenda manquante. Je transmets votre demande.",
             }
+
+        # `calcom_event_type_id = 0` = onboarding Cal.com incomplet → traité comme absent
+        event_type_id = garage.data.get("calcom_event_type_id") or None
 
         scheduled_at = params.get("scheduled_at", "")
         client_name  = params.get("client_name", "Client")
@@ -276,11 +300,24 @@ class CalComClient:
         if vehicle_info:
             title += f" - {vehicle_info}"
 
+        # Sans event type, inutile d'appeler Cal.com : on va droit au repli local,
+        # dont le message n'annonce PAS une confirmation ferme au client.
+        if not event_type_id:
+            logger.error(
+                f"❌ Agenda Cal.com non rattaché (garage {garage_id}) — "
+                f"RDV enregistré en base uniquement, ABSENT de l'agenda du garage"
+            )
+            return await self._create_local_booking(garage_id, params, title)
+
         try:
             async with self._client() as client:
                 booking_payload = {
                     "start":    scheduled_at,
-                    "eventTypeId": garage.data.get("calcom_user_id"),
+                    # Bug corrige le 14/08/2026 : ce champ recevait calcom_user_id
+                    # (colonne vide de surcroit). eventTypeId null => Cal.com refuse
+                    # => repli en base locale, donc RDV absent de l'agenda du garage
+                    # alors que l'agent annonce au client « c'est confirme ».
+                    "eventTypeId": event_type_id,
                     "attendee": {
                         "name":     client_name,
                         "email":    client_email or f"client+{client_phone}@agentlumy.com",
@@ -298,7 +335,11 @@ class CalComClient:
 
                 response = await client.post("/bookings", json=booking_payload)
                 response.raise_for_status()
-                booking = response.json()
+                # L'API v2 encapsule la réservation sous `data` : lire à la racine
+                # renvoyait un uid vide, donc un RDV impossible à retrouver ensuite
+                # (modification, annulation) alors que tout semblait avoir réussi.
+                payload = response.json()
+                booking = payload.get("data", payload) if isinstance(payload, dict) else {}
 
         except Exception as e:
             logger.error(f"❌ Erreur Cal.com create_booking : {e}")
