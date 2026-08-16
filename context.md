@@ -513,4 +513,45 @@ Il avait disparu comme les scripts SQL. Sans lui, impossible de savoir quelles v
 sont requises — bloquant pour le déploiement Cloud Run. Reconstruit depuis `app/config.py`,
 sans aucun secret.
 
+## ✅ Simulateur d'appel — bloc A (14/08/2026)
+
+Rejoue un parcours client complet contre le backend réel : **sans téléphone, sans Vapi,
+sans crédits**. Jusqu'ici, vérifier un parcours coûtait un vrai appel — c'est pour ça que
+des pannes dures sont restées invisibles pendant des mois.
+
+    venv\Scripts\python.exe scripts/simulate_call.py --list
+    venv\Scripts\python.exe scripts/simulate_call.py --scenario rdv
+    venv\Scripts\python.exe scripts/simulate_call.py --scenario urgence
+    venv\Scripts\python.exe scripts/simulate_call.py --sans-agenda   # garage non rattaché
+
+5 scénarios : rdv · annulation · urgence · mecontentement · message.
+La sortie affiche le dialogue (ce que dirait l'agent) **et** un bilan de ce qui a réellement
+été enregistré — les deux peuvent diverger, c'est justement ce qu'on cherche à voir.
+
+Ce qui est réel : FastAPI complet, signature HMAC (le harnais signe comme Vapi, il ne
+contourne pas la sécurité), middlewares, logique métier, base Supabase.
+Ce qui est simulé : uniquement le réseau vers Twilio, Cal.com, Vapi, Resend.
+
+Isolation : chaque simulation crée un **garage jetable** supprimé à la fin. Les FK sont en
+ON DELETE CASCADE, donc appels, RDV et notifications partent avec. Aucune donnée réelle
+n'est touchée.
+
+Fichiers : `tests/simulator/` (harness + payloads), `scripts/simulate_call.py` (CLI),
+`tests/integration/test_scenarios_usage.py` (13 scénarios en pytest).
+**Suite complète : 47 tests verts.**
+
+## 🔴 Bug trouvé par le simulateur — le taux de conversion était faux
+
+`on_call_ended` écrasait systématiquement `call_status` par le statut déduit de
+`endedReason`. Un RDV pris était donc **recompté en `information_donnee`** dès que l'agent
+raccrochait normalement ; un transfert devenait `abandonne` si le client raccrochait.
+
+Conséquence : le KPI principal du dashboard — le taux de conversion — mesurait n'importe
+quoi, et les 5 appels de test en base sont probablement mal classés.
+
+Correction : les statuts **métier** (`rdv_pris`, `rdv_modifie`, `rdv_annule`,
+`devis_propose`, `message_laisse`, `transfere_humain`, `urgence_signalee`) décrivent ce que
+l'appel a produit et priment sur les statuts **techniques** (`abandonne`, `erreur`,
+`information_donnee`) qui ne décrivent que sa fin. Verrouillé par 3 tests.
+
 ## ⏳ Étape 12 — Optimisation (À FAIRE)

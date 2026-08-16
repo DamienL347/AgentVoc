@@ -166,7 +166,6 @@ class CallHandler:
 
         # Mettre à jour l'appel en BDD
         update_data = {
-            "call_status":      call_status.value,
             "transcription":    transcript,
             "summary":          summary,
             "duration_seconds": duration_seconds,
@@ -174,6 +173,19 @@ class CallHandler:
             "urgency_level":    urgency_level.value,
             "detected_keywords": keywords,
         }
+
+        # Le statut déduit de `endedReason` ne doit PAS écraser un résultat métier
+        # déjà acquis pendant l'appel : un RDV pris reste un RDV pris, même si
+        # l'agent raccroche ensuite normalement. Sans cette garde, tous les RDV
+        # étaient recomptés en « information_donnee » et le taux de conversion
+        # du dashboard était faux.
+        if self._is_business_outcome(vapi_call_id):
+            logger.info(
+                f"↩️ Statut métier conservé pour {vapi_call_id} "
+                f"(fin d'appel « {call_status.value} » ignorée)"
+            )
+        else:
+            update_data["call_status"] = call_status.value
 
         self.db.table("calls").update(update_data).eq(
             "vapi_call_id", vapi_call_id
@@ -663,6 +675,36 @@ class CallHandler:
         }
 
     # ── Utilitaires ──────────────────────────────────────────
+
+    # Statuts posés par un outil pendant l'appel : ils décrivent ce que l'appel a
+    # produit. Ceux déduits de `endedReason` (abandonne, erreur,
+    # information_donnee) ne décrivent que la façon dont il s'est terminé.
+    BUSINESS_OUTCOMES = {
+        CallStatus.RDV_PRIS.value,
+        CallStatus.RDV_MODIFIE.value,
+        CallStatus.RDV_ANNULE.value,
+        CallStatus.DEVIS_PROPOSE.value,
+        CallStatus.MESSAGE_LAISSE.value,
+        CallStatus.TRANSFERE_HUMAIN.value,
+        CallStatus.URGENCE_SIGNALEE.value,
+    }
+
+    def _is_business_outcome(self, vapi_call_id: str) -> bool:
+        """L'appel a-t-il déjà un résultat métier à préserver ?"""
+        self._lazy_init()
+        try:
+            result = (
+                self.db.table("calls")
+                .select("call_status")
+                .eq("vapi_call_id", vapi_call_id)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return result.data[0].get("call_status") in self.BUSINESS_OUTCOMES
+        except Exception as e:
+            logger.warning(f"⚠️ Lecture du statut impossible pour {vapi_call_id} : {e}")
+        return False
 
     def _get_call_id(self, vapi_call_id: str) -> Optional[str]:
         """
