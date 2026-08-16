@@ -1,0 +1,83 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AgentLumy — Intégration continue
+#
+# Tourne à chaque push et pull request. Gratuit : GitHub Actions est offert sur
+# les dépôts publics, et inclut un quota mensuel confortable sur les privés.
+#
+# Les tests d'intégration ont besoin de Supabase. Sans les secrets configurés,
+# ils se désactivent d'eux-mêmes (skipif dans les fichiers de test) : la CI
+# reste verte et exécute au moins les tests unitaires.
+# ─────────────────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      # Les fournisseurs externes sont simulés : la CI n'envoie aucun SMS,
+      # n'achète aucun numéro et ne consomme aucun crédit.
+      PROVIDER_MODE: fake
+      APP_ENV: development
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Vérifier le style (non bloquant pour l'instant)
+        run: ruff check app/ tests/ scripts/ || true
+
+      - name: Lancer les tests
+        run: pytest tests/ -v --tb=short
+
+      - name: Vérifier que l'image Docker se construit
+        run: docker build -t agentlumy-api:ci .
+
+      - name: Vérifier que le conteneur démarre et répond
+        run: |
+          docker run -d --name api-ci -p 8080:8080 \
+            -e APP_ENV=production \
+            -e PROVIDER_MODE=fake \
+            -e SUPABASE_URL="${SUPABASE_URL:-https://exemple.invalid}" \
+            -e SUPABASE_SERVICE_ROLE_KEY="${SUPABASE_SERVICE_ROLE_KEY:-cle-factice}" \
+            agentlumy-api:ci
+
+          # Le conteneur doit répondre : on interroge /health plutôt que
+          # d'attendre une durée arbitraire.
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8080/health; then
+              echo "" && echo "Conteneur opérationnel"
+              docker rm -f api-ci
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Le conteneur n'a jamais répondu sur /health"
+          docker logs api-ci
+          docker rm -f api-ci
+          exit 1

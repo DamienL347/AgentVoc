@@ -1,0 +1,46 @@
+# Ce qui ne doit JAMAIS entrer dans l'image
+# (secrets, poids inutile, ou sans objet en production)
+
+# ── Secrets ──────────────────────────────────────────────
+# Les variables viennent de Secret Manager, jamais d'un fichier embarqué :
+# un .env copié dans une image se retrouve lisible par quiconque la télécharge.
+.env
+.env.*
+!.env.example
+
+# ── Environnements Python ────────────────────────────────
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Hors périmètre du backend ────────────────────────────
+dashboard.py
+dashboard_theme.py
+.streamlit/
+portfolio/
+docs/
+scripts/
+tests/
+requirements-dev.txt
+requirements-dashboard.txt
+
+# ── Outils et historique ─────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+.github/
+.vscode/
+.claude/
+*.md
+!README.md
+
+# ── Divers ───────────────────────────────────────────────
+*.log
+*.csv
+.DS_Store
+Thumbs.db

@@ -1,10 +1,19 @@
 # ==========================================
-# VOICE AGENT GARAGE - Python Dependencies
+# AgentLumy — Dépendances d'EXÉCUTION (backend)
 # ==========================================
+# Ce fichier ne contient QUE ce dont le backend a besoin pour tourner.
+# C'est lui qui est installé dans l'image Docker : chaque paquet en trop
+# alourdit l'image, donc le démarrage à froid de Cloud Run, donc la latence
+# du premier appel — l'objectif de l'étape 12 est < 800 ms.
+#
+#   Développement (tests, lint, scripts) : requirements-dev.txt
+#   Dashboard Streamlit                  : requirements-dashboard.txt
+#
+# Vérifié par grep des imports de app/ : le backend n'importe rien d'autre.
 
-# ===== Framework Web =====
-# fastapi >= 0.139 requis : streamlit 1.58 impose starlette 1.x,
-# incompatible avec fastapi 0.115 (app cassée si on mélange)
+# ===== Framework web =====
+# fastapi >= 0.139 requis : streamlit 1.58 impose starlette 1.x, incompatible
+# avec fastapi 0.115. On garde le même pin partout pour éviter deux résolutions.
 fastapi==0.139.2
 starlette>=1.3.0
 uvicorn[standard]==0.32.1
@@ -15,66 +24,20 @@ pydantic==2.10.3
 pydantic-settings==2.6.1
 python-dotenv==1.0.1
 
-# ===== HTTP Clients =====
+# ===== Client HTTP (Cal.com, Vapi) =====
 httpx==0.27.2
-requests==2.32.3
-
-# ===== LLM (Anthropic) =====
-anthropic==0.40.0
 
 # ===== Base de données =====
 supabase==2.10.0
 postgrest==0.18.0
-psycopg2-binary==2.9.10
-sqlalchemy==2.0.36
 
-# ===== Twilio (Téléphonie + SMS) =====
+# ===== Téléphonie et email =====
 twilio==9.3.7
-
-# ===== Email (Resend) =====
 resend==2.5.1
 
-# ===== Google Calendar =====
-google-auth==2.36.0
-google-auth-oauthlib==1.2.1
-google-auth-httplib2==0.2.0
-google-api-python-client==2.154.0
-
-# ===== Cal.com (pas de SDK officiel, on utilise httpx) =====
-# Voir app/integrations/calcom_client.py
-
 # ===== Utilitaires =====
-python-dateutil==2.9.0.post0
-pytz==2024.2
 phonenumbers==8.13.50
-unidecode==1.3.8
 
-# ===== Sécurité =====
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-cryptography==44.0.0
-
-# ===== Logging & Monitoring =====
-structlog==24.4.0
-loguru==0.7.3
-
-# ===== Tests =====
-pytest==8.3.4
-pytest-asyncio==0.24.0
-pytest-cov==6.0.0
-pytest-mock==3.14.0
-httpx==0.27.2  # déjà listé, doublon volontaire
-faker==33.1.0
-
-# ===== Dashboard (dashboard.py) =====
-streamlit==1.58.0
-plotly==6.7.0
-pandas==3.0.3
-
-# ===== Dev tools =====
-black==24.10.0
-ruff==0.8.2
-mypy==1.13.0
-ipython==8.30.0
-
-tzdata ==2024.1
+# Requis pour ZoneInfo("Europe/Paris") : Windows n'a pas de base tz système,
+# et les images python:slim non plus.
+tzdata==2024.1

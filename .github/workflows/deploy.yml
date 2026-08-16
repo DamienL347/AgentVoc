@@ -1,0 +1,122 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AgentLumy — Déploiement sur Google Cloud Run
+#
+# Ne se déclenche QUE manuellement (workflow_dispatch) tant que la mise en
+# production n'est pas rodée : un déploiement automatique sur chaque push
+# enverrait en production du code jamais essayé en conditions réelles.
+# Pour passer en automatique plus tard, décommenter le bloc `push` ci-dessous.
+#
+# Prérequis (voir docs/DEPLOIEMENT.md) :
+#   • un projet Google Cloud avec la facturation activée (carte bancaire exigée,
+#     même si l'usage reste dans le palier gratuit)
+#   • les secrets applicatifs dans Secret Manager
+#   • l'authentification GitHub → GCP par Workload Identity Federation
+# ─────────────────────────────────────────────────────────────────────────────
+name: Déploiement Cloud Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      raison:
+        description: "Motif du déploiement"
+        required: false
+        default: "Déploiement manuel"
+  # push:
+  #   branches: [main]
+
+env:
+  SERVICE: voice-agent-garage-api
+  REGION: europe-west1          # Belgique : la plus proche des clients FR
+  REGISTRY: europe-west1-docker.pkg.dev
+  REPOSITORY: agentlumy
+
+jobs:
+  deploy:
+    name: Construire et déployer
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      id-token: write        # requis par Workload Identity Federation
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Authentification sans clé JSON : GitHub prouve son identité à Google
+      # directement. Une clé de compte de service téléchargée est un secret
+      # permanent qui fuit tôt ou tard.
+      - name: Authentification Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Configurer gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Autoriser Docker sur Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Construire et pousser l'image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}"
+          # Deux étiquettes : le SHA pour pouvoir revenir en arrière avec
+          # précision, `latest` pour la lisibilité.
+          docker build -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      - name: Déployer sur Cloud Run
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}"
+
+          gcloud run deploy ${{ env.SERVICE }} \
+            --image "$IMAGE:${{ github.sha }}" \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8080 \
+            --memory 512Mi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 5 \
+            --timeout 300 \
+            --set-env-vars "APP_ENV=production,PROVIDER_MODE=real,DEFAULT_TIMEZONE=Europe/Paris" \
+            --set-secrets "\
+          SUPABASE_URL=supabase-url:latest,\
+          SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,\
+          SUPABASE_ANON_KEY=supabase-anon-key:latest,\
+          VAPI_PRIVATE_KEY=vapi-private-key:latest,\
+          VAPI_WEBHOOK_SECRET=vapi-webhook-secret:latest,\
+          TWILIO_ACCOUNT_SID=twilio-account-sid:latest,\
+          TWILIO_AUTH_TOKEN=twilio-auth-token:latest,\
+          TWILIO_PHONE_NUMBER=twilio-phone-number:latest,\
+          CALCOM_API_KEY=calcom-api-key:latest,\
+          RESEND_API_KEY=resend-api-key:latest,\
+          CARTESIA_API_KEY=cartesia-api-key:latest,\
+          DEEPGRAM_API_KEY=deepgram-api-key:latest"
+
+      # --allow-unauthenticated est nécessaire : Vapi appelle les webhooks sans
+      # identifiants Google. La protection repose sur la signature HMAC vérifiée
+      # par app/api/security.py — d'où l'importance de VAPI_WEBHOOK_SECRET.
+
+      - name: Vérifier que le service répond
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE }} \
+                --region ${{ env.REGION }} --format 'value(status.url)')
+          echo "Service déployé : $URL"
+
+          for i in $(seq 1 10); do
+            if curl -fsS "$URL/health"; then
+              echo "" && echo "Déploiement vérifié"
+              echo "APP_BASE_URL à reporter dans Vapi : $URL" >> $GITHUB_STEP_SUMMARY
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Le service ne répond pas sur /health — restauration de la version précédente"
+          gcloud run services update-traffic ${{ env.SERVICE }} \
+            --region ${{ env.REGION }} --to-revisions=PREVIOUS=100
+          exit 1

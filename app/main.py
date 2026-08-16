@@ -30,10 +30,23 @@ async def lifespan(app: FastAPI):
     """Initialisation et nettoyage de l'application."""
 
     # ── Startup ──────────────────────────────────────────────
+    import os
+
+    # Cloud Run impose le port réel via PORT : c'est lui qui fait foi, pas
+    # APP_PORT. Logguer APP_PORT en production ferait chercher au mauvais endroit.
+    port_effectif = os.getenv("PORT", str(settings.APP_PORT))
+
     logger.info("🚀 Démarrage de Voice Agent Garage API")
-    logger.info(f"   ENV     : {settings.APP_ENV}")
-    logger.info(f"   PORT    : {settings.APP_PORT}")
-    logger.info(f"   LLM     : {settings.ANTHROPIC_MODEL}")
+    logger.info(f"   ENV       : {settings.APP_ENV}")
+    logger.info(f"   PORT      : {port_effectif}")
+    logger.info(f"   LLM       : {settings.ANTHROPIC_MODEL}")
+    logger.info(f"   PROVIDERS : {'SIMULÉS' if settings.use_fake_providers else 'réels'}")
+
+    if settings.use_fake_providers and settings.is_production:
+        logger.error(
+            "🚨 PROVIDER_MODE=fake en PRODUCTION : aucun SMS ni RDV ne partira "
+            "réellement. Basculer sur PROVIDER_MODE=real."
+        )
 
     # Initialiser Supabase
     from app.db.supabase_client import init_supabase

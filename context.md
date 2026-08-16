@@ -594,11 +594,67 @@ Simulateur : `--scenario voiture-prete`, `--scenario creneau-pris`, option `--fe
 **Suite complète : 71 tests verts.**
 
 ### Reste à traiter sur les cas d'usage
-- **Congés / fermetures exceptionnelles** : `business_hours` ne gère qu'une semaine type.
-  Un garage fermé 3 semaines en août verrait l'agent proposer des créneaux — sauf si Cal.com
-  est réellement rattaché (l'agenda filtre alors les indisponibilités). Nécessite une
-  colonne `closures` (jsonb) et une migration.
+- **Congés — décision prise le 14/08/2026** : pas de colonne `closures`, pas de migration.
+  Le garage bloque ses congés **dans son propre agenda** (période indisponible Cal.com), qui
+  reste la seule source de vérité. À développer : une feature « garage en vacances » — quand
+  l'agenda ne renvoie aucun créneau sur la fenêtre courante, élargir la recherche, annoncer
+  la fermeture et proposer les premiers créneaux disponibles à la réouverture, au lieu de
+  répondre « aucune disponibilité ».
+  ⚠️ Cette feature suppose l'agenda réellement rattaché : sans lui, les créneaux de repli
+  ignorent les congés (ils sont annoncés « sous réserve », ce qui limite la casse).
 - Démarchage téléphonique, clients non francophones, devis détaillé : à arbitrer avec les
   premiers testeurs plutôt qu'à deviner maintenant.
+
+## ✅ Étape 13 — Déploiement Cloud Run : PRÊT (14/08/2026) — bloc D
+
+Tout est écrit et vérifiable ; **le déploiement effectif attend un moyen de paiement**
+(Google Cloud exige une carte pour activer la facturation, même si l'usage reste dans le
+palier gratuit — voir `docs/DEPLOIEMENT.md`).
+
+**Dépendances scindées en trois fichiers.** `requirements.txt` ne contenait que 11 des
+40 paquets réellement nécessaires au backend : streamlit, pandas, ipython, mypy et les
+autres partaient dans l'image. Chaque paquet en trop alourdit le démarrage à froid, donc
+la latence du premier appel (objectif < 800 ms, étape 12).
+
+    requirements.txt             → exécution du backend (11 paquets, vérifiés par grep des imports)
+    requirements-dev.txt         → tests, lint, scripts
+    requirements-dashboard.txt   → streamlit, plotly, pandas
+
+⚠️ Ton venv actuel a déjà tout : rien ne casse. Sur une machine neuve, installer
+`requirements-dev.txt` **et** `requirements-dashboard.txt`.
+
+**`Dockerfile`** — image en deux étages (les outils de compilation ne partent pas en
+production), utilisateur non root, `PORT` lu à l'exécution (Cloud Run l'impose et peut le
+changer), un seul worker (Cloud Run monte en charge en ajoutant des instances).
+
+**`.dockerignore`** — exclut `.env` en premier lieu : un fichier de secrets copié dans une
+image reste lisible par quiconque la télécharge.
+
+**`.github/workflows/ci.yml`** — tests + construction de l'image + démarrage réel du
+conteneur vérifié sur `/health`, à chaque push. `PROVIDER_MODE=fake` : la CI n'envoie aucun
+SMS et ne consomme aucun crédit. Sans secrets Supabase configurés, les tests d'intégration
+se désactivent d'eux-mêmes et la CI reste verte.
+
+**`.github/workflows/deploy.yml`** — déclenchement **manuel** volontairement : un déploiement
+automatique enverrait en production du code jamais essayé en conditions réelles, sur un
+service qui décroche le téléphone. Authentification par Workload Identity Federation (aucune
+clé JSON téléchargée). Vérifie `/health` après déploiement et **restaure la version
+précédente** en cas d'échec.
+
+**`docs/DEPLOIEMENT.md`** — procédure complète : projet GCP, Artifact Registry, secrets,
+fédération d'identité, bascule des URL.
+
+Vérifié sans Docker (non installé sur ce poste) : l'application démarre bien avec
+`APP_ENV=production` et le port injecté par variable ; `/health` répond 200 et `/docs`
+renvoie 404 (documentation désactivée en production). Le `docker build` lui-même n'a **pas**
+pu être essayé localement — c'est la CI qui le validera au premier push.
+
+Ajouté au démarrage : un log d'erreur si `PROVIDER_MODE=fake` est actif en production
+(sinon aucun SMS ne partirait réellement, sans que rien ne le signale).
+
+### Après le premier déploiement — 3 URL à reporter
+1. Vapi : webhooks et outils → `<URL>/api/webhooks/vapi`, `<URL>/api/tools/*`
+2. `APP_BASE_URL` dans les variables Cloud Run
+3. Google OAuth : URI de redirection → `<URL>/auth/google/callback`
 
 ## ⏳ Étape 12 — Optimisation (À FAIRE)

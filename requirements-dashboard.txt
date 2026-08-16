@@ -1,0 +1,14 @@
+# ==========================================
+# AgentLumy — Dépendances du DASHBOARD
+# ==========================================
+# dashboard.py (Streamlit). N'entre PAS dans l'image Docker du backend :
+# streamlit + pandas pèsent à eux seuls plus lourd que tout le reste.
+#
+#   venv\Scripts\python.exe -m pip install -r requirements-dashboard.txt
+#   venv\Scripts\streamlit run dashboard.py
+
+-r requirements.txt
+
+streamlit==1.58.0
+plotly==6.7.0
+pandas==3.0.3

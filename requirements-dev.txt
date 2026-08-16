@@ -1,0 +1,28 @@
+# ==========================================
+# AgentLumy — Dépendances de DÉVELOPPEMENT
+# ==========================================
+# Tests, qualité de code et scripts d'exploitation.
+# N'entre PAS dans l'image Docker.
+#
+#   venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# ===== Tests =====
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+pytest-mock==3.14.0
+faker==33.1.0
+
+# ===== Qualité de code =====
+black==24.10.0
+ruff==0.8.2
+mypy==1.13.0
+
+# ===== Scripts d'exploitation =====
+# scripts/dump_schema.py : connexion directe Postgres
+psycopg2-binary==2.9.10
+
+# ===== Confort =====
+ipython==8.30.0
