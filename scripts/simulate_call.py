@@ -157,12 +157,59 @@ def scenario_message(sim) -> None:
     _bilan(call)
 
 
+def scenario_voiture_prete(sim) -> None:
+    call = sim.new_call(caller=CLIENT)
+    call.start()
+
+    client_dit("Bonjour, je voulais savoir si ma voiture est prete ?")
+    res = call.tool("check_vehicle_status", client_phone=CLIENT)
+    agent_dit(res.message)
+    technique(f"decision de l'outil : {res.body.get('action')}")
+
+    if res.body.get("action") == "take_message":
+        client_dit("Oui, Pierre Moreau, au 06 12 34 56 78.")
+        msg = call.tool("take_message", client_name="Pierre Moreau",
+                        client_phone=CLIENT, message="Souhaite savoir si sa Clio est prete")
+        agent_dit(msg.message)
+
+    call.end(duration=41, summary="Demande d'etat du vehicule")
+    _bilan(call)
+
+
+def scenario_creneau_pris(sim) -> None:
+    call = sim.new_call(caller=CLIENT)
+    call.start()
+
+    client_dit("Je voudrais un rendez-vous pour une revision.")
+    dispo = call.tool("check_availability", service_type="revision")
+    agent_dit(dispo.message)
+
+    creneau = dispo.body["slots"][0]["start"]
+    call.tool("create_appointment", scheduled_at=creneau, client_name="Pierre Moreau",
+              client_phone=CLIENT, service_type="revision")
+    technique("pendant ce temps, un autre client reserve le meme creneau...")
+
+    autre = sim.new_call(caller="+33622334455")
+    autre.start()
+    client_dit("(2e client) Je prends le meme creneau.")
+    conflit = autre.tool("create_appointment", scheduled_at=creneau,
+                         client_name="Marie Dupont", client_phone="+33622334455",
+                         service_type="revision")
+    agent_dit(conflit.message)
+    technique(f"conflit detecte = {conflit.body.get('conflict')}")
+
+    autre.end(duration=55, summary="Creneau indisponible, a rappeler")
+    _bilan(autre)
+
+
 SCENARIOS = {
     "rdv":            ("Prise de rendez-vous complete",        scenario_rdv),
     "annulation":     ("Prise puis annulation de RDV",         scenario_annulation),
     "urgence":        ("Urgence depannage + transfert",        scenario_urgence),
     "mecontentement": ("Client mecontent -> transfert humain", scenario_mecontentement),
     "message":        ("Demande de devis -> message au patron", scenario_message),
+    "voiture-prete":  ("« Ma voiture est-elle prete ? »",      scenario_voiture_prete),
+    "creneau-pris":   ("Creneau reserve pendant l'appel",      scenario_creneau_pris),
 }
 
 
@@ -184,6 +231,8 @@ def main() -> None:
     parser.add_argument("--list", action="store_true", help="liste les scenarios")
     parser.add_argument("--sans-agenda", action="store_true",
                         help="garage dont l'agenda Cal.com n'est pas rattache")
+    parser.add_argument("--ferme", action="store_true",
+                        help="garage ferme : transfert impossible, prise de message")
     args = parser.parse_args()
 
     if args.list:
@@ -194,9 +243,11 @@ def main() -> None:
 
     libelle, fonction = SCENARIOS[args.scenario]
     titre(f"{libelle}"
-          + ("  (SANS agenda rattache)" if args.sans_agenda else ""))
+          + ("  (SANS agenda rattache)" if args.sans_agenda else "")
+          + ("  (garage FERME)" if args.ferme else ""))
 
-    with CallSimulator(calcom_ready=not args.sans_agenda) as sim:
+    with CallSimulator(calcom_ready=not args.sans_agenda,
+                       ouvert=not args.ferme) as sim:
         technique(f"garage jetable {sim.garage_id}")
         fonction(sim)
 

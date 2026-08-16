@@ -554,4 +554,51 @@ Correction : les statuts **métier** (`rdv_pris`, `rdv_modifie`, `rdv_annule`,
 l'appel a produit et priment sur les statuts **techniques** (`abandonne`, `erreur`,
 `information_donnee`) qui ne décrivent que sa fin. Verrouillé par 3 tests.
 
+## ✅ Cas d'usage V1 complétés — bloc B (14/08/2026)
+
+Les 6 cas d'origine ne couvraient pas des situations quotidiennes en garage. Fil conducteur
+de tous ces ajouts : **l'agent ne doit jamais promettre ce qu'il ne peut pas tenir.**
+
+**CAS 9 — « Ma voiture est-elle prête ? »** (nouvel outil `check_vehicle_status`)
+Souvent le 2ᵉ motif d'appel. L'agent n'a aucun accès au suivi de l'atelier : il le dit, puis
+route — mise en relation si le garage est ouvert, prise de message sinon. Il remonte au
+passage le dernier RDV connu du client, utile à qui reprend l'appel. Interdiction explicite
+d'inventer un état d'avancement : un client qui se déplace pour rien ne revient pas.
+
+**CAS 10 — Le client veut un humain**
+Transfert immédiat, sans insister. Surtout : **on ne transfère plus vers un téléphone qui ne
+décrochera pas.** Sans numéro configuré ou hors horaires, l'agent l'annonce et bascule sur
+la prise de message. Tomber dans le vide est pire que ne pas transférer, en particulier pour
+un client déjà mécontent. (1 garage sur 3 en base n'a pas de `transfer_phone_number`.)
+
+**CAS 11 — Numéro masqué** (`phone.is_anonymous`)
+Sans numéro : ni rappel, ni SMS de confirmation, ni recherche de RDV. L'agent doit demander
+le numéro avant de promettre quoi que ce soit.
+
+**CAS 12 — Créneau pris pendant la conversation**
+Entre l'annonce d'un créneau et son acceptation, il s'écoule une minute — assez pour qu'il
+soit pris ailleurs. Détection de **chevauchement** (pas seulement d'heure de début
+identique : une vidange de 45 min posée au milieu d'une révision de 90 min bloque aussi
+l'atelier). En cas de doute technique, on laisse passer plutôt que de perdre le client.
+
+**Créneaux sous réserve**
+Quand l'agenda n'est pas rattaché, `check_availability` renvoie `tentative: true` et l'agent
+dit « sous réserve de confirmation par le garage » au lieu d'annoncer des créneaux fermes.
+
+Horaires : `app/utils/business_hours.py` (`is_open_at`, `next_opening_fr`,
+`describe_hours_fr`). Sans horaires exploitables, on considère le garage **fermé** — mieux
+vaut prendre un message à tort que promettre un transfert qui n'aboutira pas.
+
+Prompts mis à jour (`garage_mecanique_v1.txt`), outil déclaré côté Vapi.
+Simulateur : `--scenario voiture-prete`, `--scenario creneau-pris`, option `--ferme`.
+**Suite complète : 71 tests verts.**
+
+### Reste à traiter sur les cas d'usage
+- **Congés / fermetures exceptionnelles** : `business_hours` ne gère qu'une semaine type.
+  Un garage fermé 3 semaines en août verrait l'agent proposer des créneaux — sauf si Cal.com
+  est réellement rattaché (l'agenda filtre alors les indisponibilités). Nécessite une
+  colonne `closures` (jsonb) et une migration.
+- Démarchage téléphonique, clients non francophones, devis détaillé : à arbitrer avec les
+  premiers testeurs plutôt qu'à deviner maintenant.
+
 ## ⏳ Étape 12 — Optimisation (À FAIRE)

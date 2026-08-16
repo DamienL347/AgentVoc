@@ -169,3 +169,18 @@ async def take_message(request: Request):
         vapi_call_id=call_id,
         garage_id=gid,
     )
+
+
+@router.post("/check_vehicle_status")
+async def check_vehicle_status(request: Request):
+    """« Ma voiture est-elle prête ? » — route vers le garage ou prend un message."""
+    payload      = await request.json()
+    call_id, gid = await _get_context(request)
+    params       = payload.get("parameters", payload.get("function", {}).get("arguments", {}))
+
+    return await call_handler.handle_tool_call(
+        tool_name="check_vehicle_status",
+        parameters=params,
+        vapi_call_id=call_id,
+        garage_id=gid,
+    )

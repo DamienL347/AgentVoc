@@ -35,3 +35,25 @@ def phones_match(a: Optional[str], b: Optional[str]) -> bool:
     """Compare deux numéros indépendamment de leur format."""
     na, nb = normalize_phone(a), normalize_phone(b)
     return na is not None and na == nb
+
+
+# Valeurs transmises par Vapi/Twilio quand l'appelant masque son numéro
+ANONYMOUS_MARKERS = {
+    "unknown", "anonymous", "private", "restricted", "unavailable",
+    "blocked", "withheld", "+266696687",   # « anonymous » composé sur un clavier
+}
+
+
+def is_anonymous(raw: Optional[str]) -> bool:
+    """
+    L'appelant masque-t-il son numéro ?
+
+    Important pour la prestation : sans numéro, on ne peut ni rappeler, ni
+    retrouver un RDV existant, ni envoyer de SMS de confirmation. L'agent doit
+    donc demander le numéro au client au lieu de promettre un rappel impossible.
+    """
+    if not raw or not str(raw).strip():
+        return True
+    if str(raw).strip().lower() in ANONYMOUS_MARKERS:
+        return True
+    return normalize_phone(raw) is None

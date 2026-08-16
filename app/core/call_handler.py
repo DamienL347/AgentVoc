@@ -228,6 +228,7 @@ class CallHandler:
             "transfer_call":            self._handle_transfer_call,
             "send_sms_alert":           self._handle_send_sms_alert,
             "take_message":             self._handle_take_message,
+            "check_vehicle_status":     self._handle_vehicle_status,
         }
 
         handler = handlers.get(tool_name)
@@ -285,6 +286,22 @@ class CallHandler:
         formatted = [s["formatted_fr"] for s in slots[:3]]
         slots_text = ", ".join(formatted)
 
+        # Créneaux de repli = agenda du garage inaccessible. Ces horaires ne
+        # viennent d'aucun planning : ils peuvent tomber pendant les congés ou
+        # sur un atelier complet. On les propose encore — mieux que de perdre le
+        # client — mais sans les annoncer comme fermes.
+        if any(s.get("is_fallback") for s in slots[:3]):
+            return {
+                "success":  True,
+                "tentative": True,
+                "message": (
+                    f"Je peux vous proposer {slots_text}, sous réserve de "
+                    f"confirmation par le garage qui vous rappellera. "
+                    f"Lequel vous conviendrait ?"
+                ),
+                "slots": slots[:3],
+            }
+
         return {
             "success": True,
             "message": f"J'ai ces créneaux disponibles : {slots_text}. Lequel vous convient ?",
@@ -299,6 +316,27 @@ class CallHandler:
     ) -> dict:
         """Crée un RDV dans Cal.com et Supabase."""
         from app.integrations.calcom_client import calcom_client
+
+        # Entre le moment où l'agent annonce un créneau et celui où le client
+        # l'accepte, il peut s'écouler une minute — assez pour qu'un autre appel
+        # ou le garagiste lui-même l'ait pris. Sans cette vérification, deux
+        # clients se retrouvent au même créneau et le garage découvre le conflit
+        # le jour même.
+        conflit = self._creneau_deja_pris(garage_id, parameters)
+        if conflit:
+            logger.warning(
+                f"⚠️ Créneau déjà réservé | garage={garage_id} | "
+                f"début={parameters.get('scheduled_at')}"
+            )
+            return {
+                "success": False,
+                "conflict": True,
+                "message": (
+                    "Ce créneau vient d'être réservé à l'instant. "
+                    "Je peux vous en proposer un autre : souhaitez-vous que "
+                    "je regarde les disponibilités ?"
+                ),
+            }
 
         result = await calcom_client.create_booking(
             garage_id=garage_id,
@@ -535,7 +573,7 @@ class CallHandler:
         # Récupérer le numéro de transfert du garage
         garage = (
             self.db.table("garages")
-            .select("transfer_phone_number, transfer_sms_number, name")
+            .select("transfer_phone_number, transfer_sms_number, name, business_hours")
             .eq("id", str(garage_id))
             .single()
             .execute()
@@ -544,6 +582,38 @@ class CallHandler:
         transfer_phone = None
         if garage.data:
             transfer_phone = garage.data.get("transfer_phone_number")
+
+        # Transférer vers un téléphone qui ne décrochera pas est pire que ne pas
+        # transférer : le client, souvent déjà mécontent ou en urgence, tombe
+        # dans le vide. Sans numéro configuré ou hors horaires, on le dit et on
+        # bascule sur la prise de message.
+        from app.utils.business_hours import is_open_at, next_opening_fr
+        ouvert = is_open_at((garage.data or {}).get("business_hours"))
+
+        if not transfer_phone or not ouvert:
+            motif = "aucun numéro de transfert configuré" if not transfer_phone \
+                    else "garage fermé"
+            logger.warning(
+                f"⚠️ Transfert impossible ({motif}) | garage={garage_id} | "
+                f"reason={reason}"
+            )
+            self.db.table("calls").update({
+                "transfer_triggered": True,
+                "transfer_reason":    reason,
+                "call_status":        CallStatus.TRANSFERE_HUMAIN.value,
+            }).eq("vapi_call_id", vapi_call_id).execute()
+
+            quand = next_opening_fr((garage.data or {}).get("business_hours"))
+            return {
+                "success":        True,
+                "action":         "take_message",
+                "transfer_phone": None,
+                "message": (
+                    f"Le garage n'est pas joignable pour le moment. "
+                    f"Je prends note de votre demande et vous serez rappelé "
+                    f"{quand}. Pouvez-vous me laisser votre nom et votre numéro ?"
+                ),
+            }
 
         # Mettre à jour l'appel en BDD
         self.db.table("calls").update({
@@ -618,6 +688,86 @@ class CallHandler:
 
         return {"success": True, "message": "Alerte envoyée."}
 
+    async def _handle_vehicle_status(
+        self,
+        parameters:  dict,
+        vapi_call_id: str,
+        garage_id:   UUID,
+    ) -> dict:
+        """
+        « Ma voiture est-elle prête ? » — l'un des motifs d'appel les plus
+        fréquents dans un garage.
+
+        L'agent n'a AUCUN moyen de le savoir : l'état d'avancement vit dans la
+        tête du mécanicien ou dans le logiciel d'atelier, auquel nous ne sommes
+        pas connectés. La seule réponse acceptable est donc honnête : ne pas
+        inventer, et router vers quelqu'un qui sait — le patron si le garage est
+        ouvert, un message à rappeler sinon.
+        """
+        from app.utils.business_hours import is_open_at, next_opening_fr
+        self._lazy_init()
+
+        client_phone = parameters.get("client_phone") or self._get_caller_phone(vapi_call_id)
+
+        garage = (
+            self.db.table("garages")
+            .select("name, business_hours, transfer_phone_number")
+            .eq("id", str(garage_id))
+            .single()
+            .execute()
+        )
+        donnees = garage.data or {}
+        ouvert  = is_open_at(donnees.get("business_hours"))
+
+        # Contexte utile pour la personne qui reprendra l'appel
+        vehicule = None
+        if client_phone:
+            recents = (
+                self.db.table("appointments")
+                .select("title, scheduled_at, vehicle_brand, vehicle_model")
+                .eq("garage_id", str(garage_id))
+                .eq("client_phone", client_phone)
+                .order("scheduled_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if recents.data:
+                vehicule = recents.data[0]
+
+        self.db.table("calls").update({
+            "demand_type": DemandType.INFORMATION.value,
+            "collected_data": {
+                "motif":        "etat_vehicule",
+                "client_phone": client_phone,
+                "vehicule":     vehicule,
+            },
+        }).eq("vapi_call_id", vapi_call_id).execute()
+
+        if ouvert and donnees.get("transfer_phone_number"):
+            return {
+                "success":        True,
+                "action":         "transfer",
+                "transfer_phone": donnees["transfer_phone_number"],
+                "vehicle_context": vehicule,
+                "message": (
+                    "Je n'ai pas le suivi de l'atelier en direct. "
+                    "Je vous mets tout de suite en relation avec le garage, "
+                    "ils vont vous répondre."
+                ),
+            }
+
+        return {
+            "success":         True,
+            "action":          "take_message",
+            "vehicle_context": vehicule,
+            "message": (
+                f"Je n'ai pas le suivi de l'atelier en direct, et le garage est "
+                f"actuellement fermé. Je note votre demande et le garage vous "
+                f"rappelle {next_opening_fr(donnees.get('business_hours'))}. "
+                f"Pouvez-vous me confirmer votre nom et votre numéro ?"
+            ),
+        }
+
     async def _handle_take_message(
         self,
         parameters:  dict,
@@ -688,6 +838,54 @@ class CallHandler:
         CallStatus.TRANSFERE_HUMAIN.value,
         CallStatus.URGENCE_SIGNALEE.value,
     }
+
+    # Statuts de RDV qui occupent réellement un créneau dans l'atelier
+    ACTIVE_APPOINTMENT_STATUSES = ("propose", "confirme", "modifie")
+
+    def _creneau_deja_pris(self, garage_id: UUID, parameters: dict) -> bool:
+        """
+        Un RDV actif chevauche-t-il déjà le créneau demandé ?
+
+        Chevauchement au sens strict : deux RDV se gênent dès que l'un commence
+        avant la fin de l'autre. Comparer les seules heures de début laisserait
+        passer une vidange de 45 min posée au milieu d'une révision de 90 min.
+        """
+        from datetime import datetime, timedelta
+
+        from app.integrations.calcom_client import SERVICE_DURATIONS
+
+        debut_brut = parameters.get("scheduled_at")
+        if not debut_brut:
+            return False
+
+        try:
+            debut = datetime.fromisoformat(str(debut_brut).replace("Z", "+00:00"))
+        except ValueError:
+            logger.warning(f"⚠️ scheduled_at illisible : {debut_brut}")
+            return False
+
+        service  = str(parameters.get("service_type", "default")).lower().replace(" ", "_")
+        duree    = SERVICE_DURATIONS.get(service, SERVICE_DURATIONS["default"])
+        fin      = debut + timedelta(minutes=duree)
+
+        try:
+            self._lazy_init()
+            existants = (
+                self.db.table("appointments")
+                .select("id, scheduled_at, ends_at, status")
+                .eq("garage_id", str(garage_id))
+                .in_("status", list(self.ACTIVE_APPOINTMENT_STATUSES))
+                .lt("scheduled_at", fin.isoformat())
+                .gt("ends_at", debut.isoformat())
+                .limit(1)
+                .execute()
+            )
+            return bool(existants.data)
+        except Exception as e:
+            # Un doute technique ne doit pas bloquer une prise de RDV : on laisse
+            # passer et le garage arbitrera, plutôt que de perdre le client.
+            logger.error(f"❌ Vérification de chevauchement impossible : {e}")
+            return False
 
     def _is_business_outcome(self, vapi_call_id: str) -> bool:
         """L'appel a-t-il déjà un résultat métier à préserver ?"""

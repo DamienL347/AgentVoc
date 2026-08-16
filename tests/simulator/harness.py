@@ -129,9 +129,27 @@ class CallSimulator:
             call.end()
     """
 
-    def __init__(self, garage_name: str = "SIM Garage", *, calcom_ready: bool = True):
-        self.garage_name  = garage_name
-        self.calcom_ready = calcom_ready
+    # Garage ouvert en permanence : par défaut, les scénarios ne doivent pas
+    # dépendre de l'heure à laquelle la suite de tests tourne.
+    HORAIRES_24_7 = {
+        jour: {"open": "00:00", "close": "23:59", "closed": False}
+        for jour in ("monday", "tuesday", "wednesday", "thursday",
+                     "friday", "saturday", "sunday")
+    }
+    HORAIRES_FERME = {
+        jour: {"open": None, "close": None, "closed": True}
+        for jour in ("monday", "tuesday", "wednesday", "thursday",
+                     "friday", "saturday", "sunday")
+    }
+
+    def __init__(self, garage_name: str = "SIM Garage", *,
+                 calcom_ready: bool = True,
+                 ouvert: bool = True,
+                 avec_transfert: bool = True):
+        self.garage_name    = garage_name
+        self.calcom_ready   = calcom_ready
+        self.ouvert         = ouvert
+        self.avec_transfert = avec_transfert
         self.garage_id: Optional[str] = None
         self._client = None
         self.db      = None
@@ -179,10 +197,13 @@ class CallSimulator:
             "phone_number": "+33500000000",
             "email":        f"sim-{suffix}@example.invalid",
             "twilio_phone_number":   f"+3375{uuid.uuid4().int % 10**7:07d}",
-            "transfer_phone_number": "+33600000001",
             "transfer_sms_number":   "+33600000001",
             "onboarding_status":     "completed",
+            "business_hours":        self.HORAIRES_24_7 if self.ouvert
+                                     else self.HORAIRES_FERME,
         }
+        if self.avec_transfert:
+            row["transfer_phone_number"] = "+33600000001"
         # Un garage « prêt » a un agenda rattaché ; sans lui, l'agent ne propose
         # que des créneaux de repli qui n'existent dans aucun agenda.
         if self.calcom_ready:

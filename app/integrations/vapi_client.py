@@ -539,6 +539,36 @@ class VapiClient:
                 },
                 "server": {"url": f"{webhook_base}/take_message"},
             },
+
+            # ── État d'un véhicule en atelier ─────────────
+            {
+                "type": "function",
+                "function": {
+                    "name":        "check_vehicle_status",
+                    "description": (
+                        "À utiliser quand le client demande si son véhicule est "
+                        "prêt, où en est la réparation, ou quand il pourra le "
+                        "récupérer. L'agent n'a PAS accès au suivi de l'atelier : "
+                        "cet outil route vers le garage ou prend un message. "
+                        "Ne jamais inventer un état d'avancement."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "client_phone": {
+                                "type":        "string",
+                                "description": "Numéro du client, s'il l'a donné",
+                            },
+                            "vehicle_info": {
+                                "type":        "string",
+                                "description": "Marque/modèle ou immatriculation si connus",
+                            },
+                        },
+                        "required": [],
+                    },
+                },
+                "server": {"url": f"{webhook_base}/check_vehicle_status"},
+            },
         ]
 
 
