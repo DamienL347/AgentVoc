@@ -154,6 +154,57 @@ curl https://<URL>/docs            # 404 attendu : la doc est désactivée en pr
 
 ---
 
+## Étape 7 — Les rappels de rendez-vous (Cloud Scheduler)
+
+Les rappels J-1 et H-2 sont déclenchés par un appel HTTP à
+`POST /internal/reminders/run`. Cloud Scheduler offre **3 tâches gratuites**, il en
+faut une seule.
+
+D'abord le secret partagé qui protège la route (elle envoie des SMS : sans
+protection, n'importe qui pourrait la déclencher en boucle) :
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+printf '%s' 'LA_VALEUR_GENEREE' | gcloud secrets create cron-secret --data-file=-
+```
+
+Ajouter `CRON_SECRET=cron-secret:latest` à la liste `--set-secrets` de
+`deploy.yml`, puis créer la tâche :
+
+```bash
+gcloud scheduler jobs create http rappels-rdv \
+  --location=europe-west1 \
+  --schedule="0 9-19 * * *" \
+  --time-zone="Europe/Paris" \
+  --uri="https://<URL_CLOUD_RUN>/internal/reminders/run" \
+  --http-method=POST \
+  --headers="x-cron-secret=LA_VALEUR_GENEREE" \
+  --attempt-deadline=120s
+```
+
+Toutes les heures entre 9h et 19h : le service refuse de toute façon d'envoyer
+hors de la plage 8h-20h, mais éviter de le réveiller la nuit économise des
+démarrages à froid inutiles.
+
+Une exécution manquée n'est pas grave : la fenêtre de recherche est large et le
+drapeau en base empêche les doublons, donc le passage suivant rattrape.
+
+Vérification :
+
+```bash
+gcloud scheduler jobs run rappels-rdv --location=europe-west1
+gcloud scheduler jobs describe rappels-rdv --location=europe-west1
+```
+
+En local, avant le déploiement :
+
+```bash
+venv\Scripts\python.exe scripts/send_reminders.py --dry-run   # liste sans envoyer
+venv\Scripts\python.exe scripts/send_reminders.py             # envoie
+```
+
+---
+
 ## Vérifier l'image en local (facultatif, nécessite Docker)
 
 ```bash

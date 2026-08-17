@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     GCP_SERVICE_NAME:      str = "voice-agent-garage-api"
     GCP_ARTIFACT_REGISTRY: str = "europe-west1-docker.pkg.dev"
 
+    # ── Tâches planifiées ────────────────────────────────────
+    # Secret partagé avec Cloud Scheduler, exigé par les routes /internal/*.
+    # Obligatoire en production : ces routes envoient des SMS.
+    CRON_SECRET: str = ""
+
     # ── Mode fournisseurs ────────────────────────────────────
     # "real" = vrais appels API (nécessite les comptes payants)
     # "fake" = fournisseurs simulés au niveau HTTP : permet de valider tout le

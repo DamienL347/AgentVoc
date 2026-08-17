@@ -36,8 +36,14 @@ def reset_log() -> None:
 
 
 def _record(kind: str, **details) -> None:
+    # Le journal conserve le contenu INTÉGRAL : c'est lui que les tests
+    # inspectent pour vérifier ce qui serait parti. Un journal tronqué masque
+    # les défauts qu'il est censé révéler. Seul l'affichage console est abrégé.
     SENT_LOG.append({"kind": kind, "at": datetime.now(timezone.utc).isoformat(), **details})
-    logger.info(f"[SIMULÉ] {kind} · {details}")
+
+    apercu = {k: (v[:80] + "…" if isinstance(v, str) and len(v) > 80 else v)
+              for k, v in details.items()}
+    logger.info(f"[SIMULÉ] {kind} · {apercu}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +61,7 @@ class _FakeMessage:
 class _FakeMessages:
     def create(self, body: str, from_: str, to: str):
         msg = _FakeMessage(to, body)
-        _record("sms", to=to, from_=from_, sid=msg.sid, body=body[:80])
+        _record("sms", to=to, from_=from_, sid=msg.sid, body=body)
         return msg
 
 

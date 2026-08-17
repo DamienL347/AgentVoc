@@ -215,6 +215,32 @@ class CallSimulator:
 
     # ── Appels ───────────────────────────────────────────────────────────────
 
+    # ── Fabrication directe de RDV ───────────────────────────────────────────
+
+    def creer_rdv(self, *, dans_heures: float = 24, client: str = "+33612345678",
+                  nom: str = "Pierre Moreau", statut: str = "confirme",
+                  titre: str = "Révision", duree: int = 90) -> dict:
+        """
+        Insère un RDV à une échéance précise, sans passer par l'agent.
+
+        Nécessaire pour tester les rappels : les créneaux proposés par l'agent
+        tombent au lendemain matin, alors qu'il faut ici viser « dans 24 h » ou
+        « dans 2 h » à la minute près.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        prevu = datetime.now(timezone.utc) + timedelta(hours=dans_heures)
+        ligne = {
+            "garage_id":        self.garage_id,
+            "scheduled_at":     prevu.isoformat(),
+            "duration_minutes": duree,
+            "title":            titre,
+            "status":           statut,
+            "client_name":      nom,
+            "client_phone":     client,
+        }
+        return self.db.table("appointments").insert(ligne).execute().data[0]
+
     # ── État du garage simulé ────────────────────────────────────────────────
 
     def db_appointments(self) -> list[dict]:

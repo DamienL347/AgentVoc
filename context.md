@@ -657,4 +657,42 @@ Ajouté au démarrage : un log d'erreur si `PROVIDER_MODE=fake` est actif en pro
 2. `APP_BASE_URL` dans les variables Cloud Run
 3. Google OAuth : URI de redirection → `<URL>/auth/google/callback`
 
+## ✅ Rappels de rendez-vous J-1 et H-2 — bloc C (14/08/2026)
+
+`reminder_24h_sent` et `reminder_2h_sent` existaient depuis la création du schéma **sans
+que rien ne les remplisse** : aucun rappel n'a jamais été envoyé. C'est pourtant le
+meilleur rapport effort/valeur du produit — un no-show coûte au garage un créneau
+d'atelier non facturable, et c'est l'argument commercial le plus concret à présenter.
+
+    venv\Scripts\python.exe scripts/send_reminders.py --dry-run   # liste sans envoyer
+    venv\Scripts\python.exe scripts/send_reminders.py             # envoie
+
+En production : Cloud Scheduler appelle `POST /internal/reminders/run` toutes les heures
+(3 tâches gratuites, il en faut une). Configuration dans `docs/DEPLOIEMENT.md` étape 7.
+
+### Trois garde-fous, et pourquoi
+1. **Idempotence par réservation optimiste** — le drapeau est posé *avant* l'envoi, sous
+   condition qu'il soit encore à `false`. Si deux exécutions se chevauchent, une seule
+   gagne la ligne ; si l'envoi échoue, le drapeau est relâché pour retenter au passage
+   suivant. Recevoir deux fois le même rappel décrédibilise l'agent auprès du client.
+2. **Heures décentes** — aucun SMS entre 20h et 8h. Réveiller un client à 3h annule tout
+   le bénéfice du rappel.
+3. **Rien** sur un RDV passé, annulé, ou sans numéro exploitable (marqué quand même, sinon
+   le service réessaierait indéfiniment à chaque passage).
+
+Le message contient prénom, garage, date en français, prestation, et **le numéro pour
+annuler** : un client qui peut annuler facilement libère le créneau au lieu de ne pas venir.
+
+Sécurité : `/internal/*` est protégée par `CRON_SECRET` (comparaison en temps constant),
+refusée en production si le secret n'est pas configuré — une route qui envoie des SMS en
+masse et que n'importe qui peut déclencher est une porte ouverte à la facture.
+
+Fichiers : `app/services/reminder_service.py`, `app/api/internal.py`,
+`scripts/send_reminders.py`, `tests/integration/test_reminders.py` (13 tests).
+**Suite complète : 84 tests verts.**
+
+⚠️ Corrigé au passage : le journal du mode simulé tronquait les messages à 80 caractères,
+ce qui masquait leur contenu réel aux tests. Un faux journal cache les défauts qu'il est
+censé révéler — même principe que la fidélité du simulateur Cal.com.
+
 ## ⏳ Étape 12 — Optimisation (À FAIRE)

@@ -118,6 +118,10 @@ app.include_router(tools_router, prefix="/api")
 from app.api.onboarding import router as onboarding_router
 app.include_router(onboarding_router)
 
+# ── Routes internes (ordonnanceur : rappels de RDV) ───────────
+from app.api.internal import router as internal_router
+app.include_router(internal_router)
+
 
 # ============================================================
 # GESTION DES ERREURS
