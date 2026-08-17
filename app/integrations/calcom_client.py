@@ -16,6 +16,13 @@ logger = logging.getLogger(__name__)
 PARIS_TZ = ZoneInfo("Europe/Paris")
 TIMEOUT  = httpx.Timeout(15.0, connect=5.0)
 
+# Fenêtre de recherche élargie quand la semaine à venir est vide. Sert à
+# détecter un garage en congés : le garagiste bloque ses vacances dans son
+# agenda Cal.com, l'agenda ne renvoie donc aucun créneau sur la période fermée.
+# Si rien cette semaine mais des créneaux plus loin, c'est une réouverture à
+# annoncer — pas une absence de disponibilité.
+EXTENDED_DAYS_AHEAD = 60
+
 # Durées par défaut selon le type de service (en minutes)
 SERVICE_DURATIONS = {
     "revision":         90,
@@ -83,10 +90,17 @@ class CalComClient:
         """
         Récupère les créneaux disponibles pour un garage.
 
+        Escalade « garage en congés » : si la fenêtre courante ne renvoie aucun
+        créneau alors que l'agenda est rattaché, on élargit la recherche jusqu'à
+        EXTENDED_DAYS_AHEAD. Les créneaux trouvés au-delà sont marqués
+        `after_closure=True` pour que l'agent annonce la réouverture au lieu de
+        dire « aucune disponibilité ».
+
         Returns:
-            list[dict] : Liste de créneaux avec formatted_fr pour l'agent
+            list[dict] : créneaux avec `formatted_fr` ; chaque créneau porte
+            `is_fallback` (agenda non rattaché) et `after_closure` (réouverture
+            après une période fermée).
         """
-        # Récupérer l'event_type_id du garage depuis Supabase
         from app.db.supabase_client import get_supabase_client
         db = get_supabase_client()
 
@@ -110,46 +124,75 @@ class CalComClient:
                 f"(calcom_event_type_id et calcom_username absents) — "
                 f"créneaux de repli proposés, ILS NE SONT PAS DANS L'AGENDA DU GARAGE"
             )
+            # Sans agenda, on ne connaît pas les congés : la feature vacances ne
+            # s'applique pas (les créneaux de repli sont annoncés « sous réserve »).
             return self._fallback_slots(service_type, preferred_slot)
-
-        # Calculer la plage de dates
-        now        = datetime.now(PARIS_TZ)
-        start_date = now + timedelta(hours=2)  # Minimum 2h dans le futur
-        end_date   = now + timedelta(days=days_ahead)
 
         duration = SERVICE_DURATIONS.get(
             service_type.lower().replace(" ", "_"),
             SERVICE_DURATIONS["default"]
         )
+        cible = {"eventTypeId": event_type_id} if event_type_id else {"username": username}
+
+        # 1er passage : la semaine à venir (cas nominal, réponse rapide).
+        slots = await self._query_slots(cible, duration, days_ahead, preferred_slot)
+        if slots:
+            logger.info(f"✅ {len(slots)} créneaux trouvés / garage {garage_id}")
+            return slots
+
+        # Rien cette semaine → le garage est peut-être en congés. On cherche loin.
+        logger.info(
+            f"🔍 Aucun créneau sous {days_ahead}j pour garage {garage_id} — "
+            f"recherche élargie à {EXTENDED_DAYS_AHEAD}j (garage en congés ?)"
+        )
+        slots = await self._query_slots(
+            cible, duration, EXTENDED_DAYS_AHEAD, preferred_slot,
+        )
+        if slots:
+            # Réouverture : on marque les créneaux pour que l'agent l'annonce.
+            for s in slots:
+                s["after_closure"] = True
+            logger.info(
+                f"🏖️ Garage {garage_id} fermé jusqu'au ~{slots[0]['formatted_fr']} — "
+                f"{len(slots)} créneaux à la réouverture"
+            )
+        else:
+            logger.warning(
+                f"⚠️ Aucun créneau sur {EXTENDED_DAYS_AHEAD}j pour garage {garage_id} "
+                f"(agenda vide ou fermeture prolongée)"
+            )
+        return slots
+
+    async def _query_slots(
+        self,
+        cible:          dict,
+        duration:       int,
+        days_ahead:     int,
+        preferred_slot: Optional[str],
+    ) -> list[dict]:
+        """Un appel Cal.com sur une fenêtre donnée. Retourne [] en cas d'erreur."""
+        now        = datetime.now(PARIS_TZ)
+        start_date = now + timedelta(hours=2)   # minimum 2h dans le futur
+        end_date   = now + timedelta(days=days_ahead)
 
         params = {
             "startTime": start_date.isoformat(),
             "endTime":   end_date.isoformat(),
             "duration":  duration,
             "timeZone":  "Europe/Paris",
+            **cible,
         }
-        if event_type_id:
-            params["eventTypeId"] = event_type_id
-        else:
-            params["username"] = username
 
         try:
             async with self._client() as client:
                 response = await client.get("/slots/available", params=params)
                 response.raise_for_status()
                 data = response.json()
-
         except Exception as e:
             logger.error(f"❌ Erreur Cal.com get_slots : {e}")
-            return self._fallback_slots(service_type, preferred_slot)
+            return []
 
-        # Parser et formater les créneaux
-        slots = self._parse_slots(data, preferred_slot)
-        logger.info(
-            f"✅ {len(slots)} créneaux trouvés pour "
-            f"{service_type} / garage {garage_id}"
-        )
-        return slots
+        return self._parse_slots(data, preferred_slot)
 
     def _parse_slots(
         self,
@@ -196,6 +239,9 @@ class CalComClient:
                     "duration_minutes": slot.get("duration", 60),
                 })
 
+        # Tri chronologique garanti : l'agent propose le plus proche d'abord, et
+        # slots[0] est la date de réouverture fiable après une période de congés.
+        slots.sort(key=lambda s: s["start"])
         return slots[:10]  # Max 10 créneaux
 
     def _format_slot_fr(self, dt: datetime) -> str:

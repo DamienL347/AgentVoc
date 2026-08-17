@@ -30,9 +30,19 @@ PARIS_TZ = ZoneInfo("Europe/Paris")
 # pour vérifier « un SMS est bien parti » sans qu'aucun SMS ne parte.
 SENT_LOG: list[dict] = []
 
+# Simule un garage en congés : aucun créneau Cal.com n'est renvoyé avant cette
+# date (le garagiste aurait bloqué cette période dans son agenda). None = ouvert.
+CLOSURE_UNTIL: "datetime | None" = None
+
 
 def reset_log() -> None:
     SENT_LOG.clear()
+
+
+def set_closure(until) -> None:
+    """Ferme l'agenda simulé jusqu'à `until` (datetime aware) ou l'ouvre (None)."""
+    global CLOSURE_UNTIL
+    CLOSURE_UNTIL = until
 
 
 def _record(kind: str, **details) -> None:
@@ -112,6 +122,11 @@ def _calcom_slots(request: httpx.Request) -> httpx.Response:
 
     while day < end:
         if day.weekday() == 6:                      # dimanche fermé
+            day += timedelta(days=1)
+            continue
+        # Congés : le garagiste a bloqué cette période dans son agenda, aucun
+        # créneau ne remonte avant la réouverture.
+        if CLOSURE_UNTIL is not None and day < CLOSURE_UNTIL:
             day += timedelta(days=1)
             continue
         hours = [9, 11] if day.weekday() == 5 else [9, 11, 14, 16]   # samedi matin

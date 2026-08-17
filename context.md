@@ -9,7 +9,7 @@
 > de bord est la **vue d'ensemble** ; le détail de chaque point est dans les sections
 > correspondantes. Tout est poussé sur `origin/main` (dépôt `DamienL347/AgentVoc`).
 
-**Suite de tests : 84 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
+**Suite de tests : 89 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
 fournisseurs simulés — aucun coût, aucun SMS réel).
 
 ### Ce qui est fait et validé sans dépense
@@ -21,6 +21,7 @@ fournisseurs simulés — aucun coût, aucun SMS réel).
 | — | Mode fournisseurs simulés (`PROVIDER_MODE=fake`) | ✅ socle de tout le reste |
 | A | Simulateur d'appel (`scripts/simulate_call.py`) | ✅ 7 scénarios |
 | B | Cas d'usage V1 complétés (véhicule prêt, humain, créneau pris, n° masqué) | ✅ |
+| — | Garage en congés (cas 13, détecté via l'agenda Cal.com) | ✅ |
 | C | Rappels de RDV J-1 et H-2 | ✅ code prêt, activé par Cloud Scheduler |
 | D | Déploiement Cloud Run (Dockerfile + CI/CD) | ✅ prêt, non déployé |
 
@@ -33,9 +34,6 @@ prestation en production :
 4. `on_call_ended` — statut métier écrasé → **taux de conversion du dashboard faux**.
 
 ### Ce qui reste — SANS dépense (faisable maintenant)
-- **Feature « garage en vacances »** : l'agenda Cal.com reste la source de vérité (le garage
-  y bloque ses congés) ; quand aucun créneau n'est dispo sur la fenêtre courante, élargir la
-  recherche et annoncer la réouverture. Décision actée, voir section « Reste à traiter ».
 - **Étape 12 — Optimisation** : latence < 800 ms, coût réel par appel, réglage des prompts.
 - **RGPD** : l'annonce d'enregistrement est déjà dans le prompt ; reste la politique de
   confidentialité et la durée de conservation.
@@ -640,14 +638,8 @@ Simulateur : `--scenario voiture-prete`, `--scenario creneau-pris`, option `--fe
 **Suite complète : 71 tests verts.**
 
 ### Reste à traiter sur les cas d'usage
-- **Congés — décision prise le 14/08/2026** : pas de colonne `closures`, pas de migration.
-  Le garage bloque ses congés **dans son propre agenda** (période indisponible Cal.com), qui
-  reste la seule source de vérité. À développer : une feature « garage en vacances » — quand
-  l'agenda ne renvoie aucun créneau sur la fenêtre courante, élargir la recherche, annoncer
-  la fermeture et proposer les premiers créneaux disponibles à la réouverture, au lieu de
-  répondre « aucune disponibilité ».
-  ⚠️ Cette feature suppose l'agenda réellement rattaché : sans lui, les créneaux de repli
-  ignorent les congés (ils sont annoncés « sous réserve », ce qui limite la casse).
+- **Congés — FAIT le 17/08/2026** (cas 13, voir section dédiée plus bas). Pas de colonne
+  `closures`, pas de migration : l'agenda Cal.com reste la seule source de vérité.
 - Démarchage téléphonique, clients non francophones, devis détaillé : à arbitrer avec les
   premiers testeurs plutôt qu'à deviner maintenant.
 
@@ -740,5 +732,33 @@ Fichiers : `app/services/reminder_service.py`, `app/api/internal.py`,
 ⚠️ Corrigé au passage : le journal du mode simulé tronquait les messages à 80 caractères,
 ce qui masquait leur contenu réel aux tests. Un faux journal cache les défauts qu'il est
 censé révéler — même principe que la fidélité du simulateur Cal.com.
+
+## ✅ Cas 13 — Garage en congés (17/08/2026)
+
+Décision produit : le garagiste bloque ses vacances **dans son propre agenda Cal.com**, qui
+reste la seule source de vérité. Aucune colonne ni migration — l'agent le déduit du
+comportement de l'agenda.
+
+**Mécanisme (escalade de recherche)** dans `get_available_slots` :
+1. 1er passage sur la semaine à venir (cas nominal, réponse rapide) ;
+2. si vide **et** agenda rattaché → 2e passage élargi à `EXTENDED_DAYS_AHEAD = 60` jours ;
+3. les créneaux trouvés au-delà sont marqués `after_closure=True` ; `slots[0]` (tri
+   chronologique garanti) donne la date de réouverture.
+
+Le 2e appel réseau n'a lieu **que** si la semaine est vide : aucun surcoût de latence dans
+le cas courant. Sans agenda rattaché, la feature ne s'applique pas (on ne connaît pas les
+congés) : retour aux créneaux de repli « sous réserve ».
+
+Réponses de `check_availability` côté agent :
+- `on_holiday=true` + `reopening` → l'agent annonce la fermeture et propose les vrais
+  créneaux de réouverture (le client réserve dès maintenant) ;
+- `no_availability=true` → vraiment rien sur 60 j → proposer un message ;
+- `tentative=true` → agenda non rattaché, créneaux de repli « sous réserve » (inchangé).
+
+Prompt : cas 13 ajouté. Simulateur : `--scenario conges --conges <jours>`, option
+`--conges N` sur tous les scénarios. Harnais : `CallSimulator(conges_jours=N)` ferme
+l'agenda simulé jusqu'à J+N (via `fake_transport.set_closure`, remis à zéro entre tests).
+
+Tests : `tests/integration/test_scenarios_conges.py` (5). **Suite complète : 89 tests verts.**
 
 ## ⏳ Étape 12 — Optimisation (À FAIRE)

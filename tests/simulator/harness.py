@@ -145,11 +145,14 @@ class CallSimulator:
     def __init__(self, garage_name: str = "SIM Garage", *,
                  calcom_ready: bool = True,
                  ouvert: bool = True,
-                 avec_transfert: bool = True):
+                 avec_transfert: bool = True,
+                 conges_jours: Optional[int] = None):
         self.garage_name    = garage_name
         self.calcom_ready   = calcom_ready
         self.ouvert         = ouvert
         self.avec_transfert = avec_transfert
+        # Congés : l'agenda Cal.com simulé ne renvoie aucun créneau avant J+N.
+        self.conges_jours   = conges_jours
         self.garage_id: Optional[str] = None
         self._client = None
         self.db      = None
@@ -175,10 +178,24 @@ class CallSimulator:
         self._secret = settings.VAPI_WEBHOOK_SECRET
         fake_transport.reset_log()
 
+        # Congés éventuels : l'agenda ne renvoie rien avant la réouverture.
+        if self.conges_jours is not None:
+            from datetime import datetime, timedelta
+            from zoneinfo import ZoneInfo
+            reouverture = datetime.now(ZoneInfo("Europe/Paris")) \
+                          + timedelta(days=self.conges_jours)
+            fake_transport.set_closure(reouverture)
+        else:
+            fake_transport.set_closure(None)
+
         self.garage_id = self._create_garage()
         return self
 
     def __exit__(self, *exc) -> None:
+        # Toujours rouvrir l'agenda simulé : sinon la fermeture fuiterait sur le
+        # test suivant qui partage l'état global de fake_transport.
+        from app.integrations import fake_transport
+        fake_transport.set_closure(None)
         # ON DELETE CASCADE : supprime aussi appels, RDV et notifications du garage
         if self.garage_id:
             self.db.table("garages").delete().eq("id", self.garage_id).execute()

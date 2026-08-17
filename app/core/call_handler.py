@@ -272,12 +272,17 @@ class CallHandler:
             preferred_slot=preferred_slot,
         )
 
+        # Aucun créneau même après recherche élargie : agenda vide ou fermeture
+        # prolongée sans réouverture visible. On ne laisse pas le client sans
+        # solution — on propose de prendre un message.
         if not slots:
             return {
                 "success": True,
+                "no_availability": True,
                 "message": (
-                    "Je n'ai pas trouvé de créneau disponible cette semaine. "
-                    "Souhaitez-vous que je regarde la semaine prochaine ?"
+                    "Je ne vois aucune disponibilité pour le moment. "
+                    "Souhaitez-vous que je prenne un message pour que le garage "
+                    "vous rappelle dès qu'un créneau se libère ?"
                 ),
                 "slots": [],
             }
@@ -298,6 +303,22 @@ class CallHandler:
                     f"Je peux vous proposer {slots_text}, sous réserve de "
                     f"confirmation par le garage qui vous rappellera. "
                     f"Lequel vous conviendrait ?"
+                ),
+                "slots": slots[:3],
+            }
+
+        # Garage en congés : rien cette semaine, mais l'agenda rouvre plus tard.
+        # On l'annonce clairement plutôt que de laisser croire à une indisponibilité.
+        if slots[0].get("after_closure"):
+            return {
+                "success":   True,
+                "on_holiday": True,
+                "reopening": slots[0]["formatted_fr"],
+                "message": (
+                    f"Le garage est actuellement fermé (congés). "
+                    f"Il rouvre à partir du {slots[0]['formatted_fr']}. "
+                    f"Je peux déjà vous réserver un créneau : "
+                    f"{slots_text}. Lequel vous conviendrait ?"
                 ),
                 "slots": slots[:3],
             }

@@ -176,6 +176,30 @@ def scenario_voiture_prete(sim) -> None:
     _bilan(call)
 
 
+def scenario_conges(sim) -> None:
+    call = sim.new_call(caller=CLIENT)
+    call.start()
+
+    client_dit("Bonjour, je voudrais un rendez-vous pour une revision.")
+    dispo = call.tool("check_availability", service_type="revision")
+    agent_dit(dispo.message)
+
+    if dispo.body.get("on_holiday"):
+        technique(f"garage detecte en conges — reouverture {dispo.body.get('reopening')}")
+
+    slots = dispo.body.get("slots", [])
+    if slots:
+        client_dit(f"Tres bien, je prends {slots[0]['formatted_fr']}.")
+        rdv = call.tool("create_appointment", scheduled_at=slots[0]["start"],
+                        client_name="Pierre Moreau", client_phone=CLIENT,
+                        service_type="revision")
+        agent_dit(rdv.message)
+        technique(f"calcom_uid = {rdv.body.get('calcom_uid') or 'VIDE'}")
+
+    call.end(duration=68, summary="RDV pris a la reouverture apres conges")
+    _bilan(call)
+
+
 def scenario_creneau_pris(sim) -> None:
     call = sim.new_call(caller=CLIENT)
     call.start()
@@ -210,6 +234,7 @@ SCENARIOS = {
     "message":        ("Demande de devis -> message au patron", scenario_message),
     "voiture-prete":  ("« Ma voiture est-elle prete ? »",      scenario_voiture_prete),
     "creneau-pris":   ("Creneau reserve pendant l'appel",      scenario_creneau_pris),
+    "conges":         ("Garage en conges -> RDV a la reouverture", scenario_conges),
 }
 
 
@@ -233,6 +258,8 @@ def main() -> None:
                         help="garage dont l'agenda Cal.com n'est pas rattache")
     parser.add_argument("--ferme", action="store_true",
                         help="garage ferme : transfert impossible, prise de message")
+    parser.add_argument("--conges", type=int, metavar="JOURS", default=None,
+                        help="garage en conges : agenda ferme pendant N jours")
     args = parser.parse_args()
 
     if args.list:
@@ -244,10 +271,12 @@ def main() -> None:
     libelle, fonction = SCENARIOS[args.scenario]
     titre(f"{libelle}"
           + ("  (SANS agenda rattache)" if args.sans_agenda else "")
-          + ("  (garage FERME)" if args.ferme else ""))
+          + ("  (garage FERME)" if args.ferme else "")
+          + (f"  (CONGES {args.conges}j)" if args.conges else ""))
 
     with CallSimulator(calcom_ready=not args.sans_agenda,
-                       ouvert=not args.ferme) as sim:
+                       ouvert=not args.ferme,
+                       conges_jours=args.conges) as sim:
         technique(f"garage jetable {sim.garage_id}")
         fonction(sim)
 
