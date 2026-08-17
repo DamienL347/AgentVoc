@@ -9,7 +9,7 @@
 > de bord est la **vue d'ensemble** ; le détail de chaque point est dans les sections
 > correspondantes. Tout est poussé sur `origin/main` (dépôt `DamienL347/AgentVoc`).
 
-**Suite de tests : 116 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
+**Suite de tests : 130 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
 fournisseurs simulés — aucun coût, aucun SMS réel).
 
 ### Ce qui est fait et validé sans dépense
@@ -24,6 +24,7 @@ fournisseurs simulés — aucun coût, aucun SMS réel).
 | — | Garage en congés (cas 13, détecté via l'agenda Cal.com) | ✅ |
 | — | Latence des outils optimisée (étape 12) | ✅ 122 ms médiane |
 | — | Prompts audités + outils Vapi enfin attachés | ✅ bug critique corrigé |
+| — | RGPD : purge automatique + droit à l'effacement | ✅ code fait, contrats à rédiger |
 | C | Rappels de RDV J-1 et H-2 | ✅ code prêt, activé par Cloud Scheduler |
 | D | Déploiement Cloud Run (Dockerfile + CI/CD) | ✅ prêt, non déployé |
 
@@ -43,8 +44,10 @@ prestation en production :
   réel par appel, qui demande de vrais appels → après souscription.
 - **Limite connue** : `supabase-py` est synchrone → les requêtes se sérialisent sous appels
   simultanés. À arbitrer avant plusieurs clients actifs (voir section étape 12).
-- **RGPD** : l'annonce d'enregistrement est déjà dans le prompt ; reste la politique de
-  confidentialité et la durée de conservation.
+- **RGPD** : partie technique ✅ (voir `docs/RGPD.md`). Restent des décisions non
+  techniques : contrat de sous-traitance (DPA) à faire relire — **bloquant commercial**,
+  les garages le demanderont —, vérification des transferts hors UE, politique de
+  confidentialité, base légale de l'enregistrement à trancher.
 
 ### Ce qui reste — AVEC dépense (reporté au mois prochain, sur décision de Damien)
 - Numéro FR dédié chez Twilio (compte payant + justificatif, délai de quelques jours).
@@ -893,5 +896,60 @@ Vérifie aussi que chaque outil a une `server.url` correspondant à son nom (sin
 arrive sur le mauvais endpoint) et une description assez précise pour guider le choix du LLM.
 
 **Suite complète : 116 tests verts.**
+
+## ✅ RGPD — partie technique (17/08/2026)
+
+Le produit enregistre et transcrit des conversations : ce sont des données personnelles,
+et elles étaient **conservées sans aucune limite**. Détail complet : `docs/RGPD.md`.
+
+    venv\Scripts\python.exe scripts/rgpd.py inventaire        # ce qui est détenu
+    venv\Scripts\python.exe scripts/rgpd.py purge --dry-run   # sans rien modifier
+    venv\Scripts\python.exe scripts/rgpd.py effacer <tel> --garage <id>
+
+### Durées de conservation appliquées
+| Donnée | Durée | À l'échéance |
+|---|---|---|
+| Enregistrement audio | 30 j | supprimé |
+| Transcription | 90 j | supprimée |
+| N° appelant + résumé | 365 j | anonymisés |
+| Contenu SMS/emails | 365 j | anonymisé (canal + statut gardés comme preuve d'envoi) |
+| Fiche client sans contact | 3 ans | supprimée |
+
+**Choix : anonymiser plutôt que supprimer.** Les métadonnées non identifiantes (durée,
+statut, type de demande) restent pour les statistiques du dashboard — supprimer les lignes
+ferait perdre l'historique des KPI sans gain de conformité. Durées configurables
+(`RETENTION_*_DAYS`), à valider avec chaque garage (responsable de traitement).
+
+En production : `POST /internal/retention/run` une fois par jour (Cloud Scheduler, étape 8
+de `docs/DEPLOIEMENT.md`, 2ᵉ des 3 tâches gratuites).
+
+### Droit à l'effacement — cloisonné par garage
+`effacer_personne()` exige un `garage_id`. Défaut trouvé et corrigé pendant l'écriture :
+la première version opérait sur **tous les garages**. Or un même numéro peut être client de
+deux garages concurrents, et un garage n'a aucun droit sur les données d'un autre.
+`tous_garages=True` reste possible pour une demande adressée à la plateforme.
+
+### Déjà en place
+- Annonce d'enregistrement dès le décrochage (testée sur les 4 types de garage).
+- RLS multi-tenant + test de cloisonnement.
+
+Tests : `tests/integration/test_retention_rgpd.py` (14). Ils vérifient les **deux** risques :
+ne rien purger, et purger des données récentes encore utiles. **130 tests verts.**
+
+### ⚠️ Reste à traiter — décisions non techniques
+1. **Contrat de sous-traitance (DPA)** — obligation art. 28 et **bloquant commercial**.
+2. **Transferts hors UE** : Vapi, Deepgram, Anthropic, Cartesia, Twilio, Resend sont
+   américains. Vérifier DPF/clauses types, et confirmer la région de Supabase.
+3. **Politique de confidentialité** à publier sur agentlumy.com.
+4. **Base légale de l'enregistrement** : intérêt légitime (hypothèse actuelle) ou
+   consentement. Piste : désactiver `ENABLE_CALL_RECORDING` et ne garder que le résumé —
+   moins de données détenues, moins de risque, et un argument commercial.
+5. Procédure de notification de violation (72 h).
+
+## 🔧 Nettoyage effectué le 17/08/2026
+Un garage `SIM Garage` résiduel traînait dans la base réelle, laissé par une erreur dans
+le `__exit__` du harnais (le `NameError` a empêché la suppression). Supprimé — 19 garages,
+plus aucun appel anonymisé résiduel. Le `__exit__` isole désormais chaque étape de
+nettoyage pour qu'une erreur n'empêche plus la suppression du garage de test.
 
 ## ⏳ Étapes suivantes

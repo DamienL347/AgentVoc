@@ -203,6 +203,35 @@ venv\Scripts\python.exe scripts/send_reminders.py --dry-run   # liste sans envoy
 venv\Scripts\python.exe scripts/send_reminders.py             # envoie
 ```
 
+## Étape 8 — La purge RGPD (Cloud Scheduler)
+
+Obligation légale, pas une option : sans elle, les enregistrements d'appels
+s'accumulent indéfiniment (voir `docs/RGPD.md`). Deuxième tâche gratuite sur les
+trois offertes.
+
+```bash
+gcloud scheduler jobs create http purge-rgpd \
+  --location=europe-west1 \
+  --schedule="30 3 * * *" \
+  --time-zone="Europe/Paris" \
+  --uri="https://<URL_CLOUD_RUN>/internal/retention/run" \
+  --http-method=POST \
+  --headers="x-cron-secret=LA_VALEUR_GENEREE" \
+  --attempt-deadline=300s
+```
+
+3h30 du matin : la purge lit et écrit sur beaucoup de lignes, autant le faire
+quand personne n'appelle.
+
+**Avant la première exécution réelle**, vérifier l'effet à vide :
+
+```bash
+venv\Scripts\python.exe scripts/rgpd.py purge --dry-run
+```
+
+La purge est idempotente : une exécution manquée est simplement rattrapée le
+lendemain.
+
 ---
 
 ## Vérifier l'image en local (facultatif, nécessite Docker)

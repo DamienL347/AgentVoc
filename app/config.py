@@ -84,6 +84,20 @@ class Settings(BaseSettings):
     GCP_SERVICE_NAME:      str = "voice-agent-garage-api"
     GCP_ARTIFACT_REGISTRY: str = "europe-west1-docker.pkg.dev"
 
+    # ── RGPD : durées de conservation (en jours) ─────────────
+    # Principe de minimisation : on ne garde une donnée personnelle que le temps
+    # nécessaire. Passé ces délais, les données sont ANONYMISÉES et non
+    # supprimées — les métadonnées non identifiantes (durée, statut, type de
+    # demande) restent exploitables pour les statistiques du dashboard.
+    #
+    # ⚠️ Ces valeurs sont des défauts prudents, à valider avec le garage
+    #    (responsable de traitement) et à inscrire dans son registre.
+    RETENTION_RECORDINGS_DAYS:    int = 30    # enregistrements audio (le plus sensible)
+    RETENTION_TRANSCRIPTS_DAYS:   int = 90    # transcriptions d'appels
+    RETENTION_CALL_DETAILS_DAYS:  int = 365   # n° appelant, résumé
+    RETENTION_NOTIFICATIONS_DAYS: int = 365   # contenu des SMS/emails envoyés
+    RETENTION_INACTIVE_CLIENTS_DAYS: int = 1095   # 3 ans après le dernier contact
+
     # ── Tâches planifiées ────────────────────────────────────
     # Secret partagé avec Cloud Scheduler, exigé par les routes /internal/*.
     # Obligatoire en production : ces routes envoient des SMS.

@@ -63,3 +63,51 @@ async def run_reminders(
 
     bilan = await reminder_service.run(ignorer_heures=ignorer_heures)
     return {"status": "ok", **bilan}
+
+
+@router.post("/retention/run")
+async def run_retention(
+    x_cron_secret: str | None = Header(None, alias="x-cron-secret"),
+    dry_run: bool = False,
+):
+    """
+    Applique les durées de conservation RGPD (anonymisation des données échues).
+
+    À planifier une fois par jour. `dry_run=true` compte sans rien modifier —
+    utile pour vérifier l'effet avant la première exécution réelle.
+    """
+    _verifier_secret(x_cron_secret)
+
+    from app.services.retention_service import retention_service
+
+    bilan = await retention_service.run(dry_run=dry_run)
+    return {"status": "ok", **bilan}
+
+
+@router.post("/rgpd/effacement")
+async def run_effacement(
+    telephone: str,
+    garage_id: str | None = None,
+    tous_garages: bool = False,
+    x_cron_secret: str | None = Header(None, alias="x-cron-secret"),
+    dry_run: bool = False,
+):
+    """
+    Droit à l'effacement (RGPD art. 17) pour un numéro de téléphone.
+
+    `garage_id` est requis : la demande est portée par un garage, qui n'a aucun
+    droit sur les données détenues par un autre — un même numéro peut être
+    client de deux garages concurrents. `tous_garages=true` est réservé à une
+    demande adressée à AgentLumy en tant que plateforme.
+
+    Route protégée par le secret : elle détruit des données de façon
+    irréversible et ne doit jamais être déclenchable depuis l'extérieur.
+    """
+    _verifier_secret(x_cron_secret)
+
+    from app.services.retention_service import retention_service
+
+    bilan = await retention_service.effacer_personne(
+        telephone, garage_id=garage_id, tous_garages=tous_garages, dry_run=dry_run,
+    )
+    return {"status": "ok", **bilan}

@@ -198,15 +198,28 @@ class CallSimulator:
         return self
 
     def __exit__(self, *exc) -> None:
-        # Toujours rouvrir l'agenda simulé : sinon la fermeture fuiterait sur le
-        # test suivant qui partage l'état global de fake_transport.
-        from app.integrations import fake_transport
-        fake_transport.set_closure(None)
-        # ON DELETE CASCADE : supprime aussi appels, RDV et notifications du garage
-        if self.garage_id:
-            self.db.table("garages").delete().eq("id", self.garage_id).execute()
-        if self._client:
-            self._client.close()
+        """
+        Nettoyage garanti.
+
+        Chaque étape est isolée : une erreur dans l'une ne doit pas empêcher la
+        suppression du garage. C'est arrivé — un NameError ici a laissé un garage
+        de test dans la vraie base, avec ses appels.
+        """
+        try:
+            # Rouvrir l'agenda simulé : l'état de fake_transport est global, une
+            # fermeture oubliée fuiterait sur le test suivant.
+            from app.integrations import fake_transport
+            fake_transport.set_closure(None)
+        except Exception:   # noqa: BLE001 — le nettoyage prime
+            pass
+
+        try:
+            # ON DELETE CASCADE : emporte appels, RDV et notifications du garage
+            if self.garage_id:
+                self.db.table("garages").delete().eq("id", self.garage_id).execute()
+        finally:
+            if self._client:
+                self._client.close()
 
     # ── Garage éphémère ──────────────────────────────────────────────────────
 
