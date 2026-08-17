@@ -3,6 +3,52 @@
 
 ---
 
+## 📊 État du projet — mis à jour le 17/08/2026
+
+> Les sections détaillées plus bas sont datées du 14/08 (session de travail). Ce tableau
+> de bord est la **vue d'ensemble** ; le détail de chaque point est dans les sections
+> correspondantes. Tout est poussé sur `origin/main` (dépôt `DamienL347/AgentVoc`).
+
+**Suite de tests : 84 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
+fournisseurs simulés — aucun coût, aucun SMS réel).
+
+### Ce qui est fait et validé sans dépense
+| Bloc | Sujet | État |
+|------|-------|------|
+| — | Dashboard de monitoring (étape 11) | ✅ à la charte AgentLumy |
+| — | Traçabilité des SMS/emails en base | ✅ |
+| — | Schéma SQL versionné (`scripts/schema.sql`) | ✅ |
+| — | Mode fournisseurs simulés (`PROVIDER_MODE=fake`) | ✅ socle de tout le reste |
+| A | Simulateur d'appel (`scripts/simulate_call.py`) | ✅ 7 scénarios |
+| B | Cas d'usage V1 complétés (véhicule prêt, humain, créneau pris, n° masqué) | ✅ |
+| C | Rappels de RDV J-1 et H-2 | ✅ code prêt, activé par Cloud Scheduler |
+| D | Déploiement Cloud Run (Dockerfile + CI/CD) | ✅ prêt, non déployé |
+
+### Bugs bloquants trouvés et corrigés pendant ces sessions
+Chacun était **invisible** (échec silencieux ou masqué par un fallback), et aurait cassé la
+prestation en production :
+1. `get_garage_by_phone()` — aucun appel ne pouvait identifier son garage (colonnes inexistantes).
+2. Cal.com `create_booking` — RDV créés dans **aucun agenda** pendant que l'agent disait « confirmé ».
+3. Cal.com réponses v2 — `calcom_uid` vide → RDV impossibles à modifier/annuler ensuite.
+4. `on_call_ended` — statut métier écrasé → **taux de conversion du dashboard faux**.
+
+### Ce qui reste — SANS dépense (faisable maintenant)
+- **Feature « garage en vacances »** : l'agenda Cal.com reste la source de vérité (le garage
+  y bloque ses congés) ; quand aucun créneau n'est dispo sur la fenêtre courante, élargir la
+  recherche et annoncer la réouverture. Décision actée, voir section « Reste à traiter ».
+- **Étape 12 — Optimisation** : latence < 800 ms, coût réel par appel, réglage des prompts.
+- **RGPD** : l'annonce d'enregistrement est déjà dans le prompt ; reste la politique de
+  confidentialité et la durée de conservation.
+
+### Ce qui reste — AVEC dépense (reporté au mois prochain, sur décision de Damien)
+- Numéro FR dédié chez Twilio (compte payant + justificatif, délai de quelques jours).
+- Plan Cal.com plateforme (managed users, uniquement pour l'onboarding auto).
+- Supabase Pro (le plan gratuit se met en pause après ~1 semaine d'inactivité).
+- Carte bancaire pour activer la facturation Google Cloud (usage réel ~0 €, mais exigée).
+- **Bascule finale** : `PROVIDER_MODE=real`, rejouer le simulateur + les tests, un appel réel.
+
+---
+
 ## 👤 Profil développeur
 - **Nom** : Damien Lauger
 - **Profil** : Business Analyst + Chef de projet IA + Python + SQL
