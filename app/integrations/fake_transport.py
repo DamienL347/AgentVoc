@@ -34,6 +34,10 @@ SENT_LOG: list[dict] = []
 # date (le garagiste aurait bloqué cette période dans son agenda). None = ouvert.
 CLOSURE_UNTIL: "datetime | None" = None
 
+# Outils Vapi « déjà créés », indexés par nom — reproduit la persistance côté
+# Vapi, pour que ensure_tools() les réutilise au lieu de les recréer.
+_FAKE_TOOLS: dict[str, dict] = {}
+
 
 def reset_log() -> None:
     SENT_LOG.clear()
@@ -203,6 +207,20 @@ def _vapi_handler(request: httpx.Request) -> httpx.Response:
     path   = request.url.path
     method = request.method
     body   = json.loads(request.content) if request.content else {}
+
+    # Outils : créés une fois puis référencés par id dans model.toolIds.
+    # On mémorise les outils « déjà créés » pour que ensure_tools() les
+    # réutilise, comme le ferait Vapi — sinon le test ne vérifierait pas la
+    # réutilisation entre garages.
+    if path.rstrip("/").endswith("/tool") or "/tool" == path:
+        if method == "GET":
+            return httpx.Response(200, json=list(_FAKE_TOOLS.values()))
+        if method == "POST":
+            nom = (body.get("function") or {}).get("name", "sans-nom")
+            if nom not in _FAKE_TOOLS:
+                _FAKE_TOOLS[nom] = {"id": f"tool_{uuid.uuid4().hex[:12]}", **body}
+                _record("vapi_tool", name=nom, id=_FAKE_TOOLS[nom]["id"])
+            return httpx.Response(201, json=_FAKE_TOOLS[nom])
 
     if "phone-number" in path and method == "POST":
         # C'est ici que part l'argent en réel : achat d'un numéro

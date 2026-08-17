@@ -131,14 +131,26 @@ class VapiClient:
             ],
 
             # ── Métadonnées ─────────────────────────────────
+            # C'est par ici que le backend identifie le tenant à chaque webhook
+            # et chaque appel d'outil : ne jamais retirer garage_id.
             "metadata": {
                 "garage_id":   str(garage_id),
                 "garage_name": garage_name,
             },
-
-            # ── Tools disponibles pour l'agent ─────────────
-            #"tools": self._build_tools_config(),
         }
+
+        # ── Outils ──────────────────────────────────────────
+        # Vapi n'accepte pas les définitions en ligne : on crée (ou réutilise)
+        # les outils, puis on référence leurs ids dans model.toolIds.
+        tool_ids = await self.ensure_tools()
+        if tool_ids:
+            payload["model"]["toolIds"] = tool_ids
+        else:
+            logger.error(
+                "🚨 Aucun outil attaché à l'assistant : l'agent pourra parler "
+                "mais ne pourra ni consulter l'agenda, ni prendre de RDV, "
+                "ni transférer l'appel."
+            )
 
         response = await self._client.post("/assistant", json=payload)
         if response.status_code >= 400:
@@ -275,6 +287,55 @@ class VapiClient:
         return response.json()
 
     # ── Outils (Tools) ───────────────────────────────────────
+
+    async def ensure_tools(self) -> list[str]:
+        """
+        Garantit que les outils existent chez Vapi et retourne leurs identifiants.
+
+        Vapi ne prend pas les définitions d'outils en ligne dans l'assistant : il
+        faut les créer via `POST /tool`, puis référencer leurs ids dans
+        `model.toolIds`. C'est cette étape qui manquait — l'attachement était
+        commenté dans `create_assistant`, donc **les assistants créés par
+        l'onboarding n'avaient aucun outil** : l'agent pouvait parler, mais ni
+        consulter l'agenda, ni prendre un RDV, ni transférer.
+
+        Les outils sont **partagés entre tous les garages** : leur définition ne
+        contient rien de spécifique à un garage (le tenant est identifié par
+        `assistant.metadata.garage_id`). On les réutilise donc au lieu d'en
+        recréer un jeu par onboarding.
+        """
+        definitions = self._build_tools_config()
+        voulus = {d["function"]["name"]: d for d in definitions}
+
+        # Outils déjà présents chez Vapi, indexés par nom
+        existants: dict[str, str] = {}
+        try:
+            reponse = await self._client.get("/tool")
+            reponse.raise_for_status()
+            for outil in reponse.json() or []:
+                nom = (outil.get("function") or {}).get("name")
+                if nom:
+                    existants[nom] = outil["id"]
+        except Exception as e:
+            logger.warning(f"⚠️ Impossible de lister les outils Vapi : {e}")
+
+        ids: list[str] = []
+        for nom, definition in voulus.items():
+            if nom in existants:
+                ids.append(existants[nom])
+                continue
+            try:
+                creation = await self._client.post("/tool", json=definition)
+                if creation.status_code >= 400:
+                    logger.error(f"❌ Création de l'outil {nom} refusée : {creation.text}")
+                    continue
+                ids.append(creation.json()["id"])
+                logger.info(f"🔧 Outil Vapi créé : {nom}")
+            except Exception as e:
+                logger.error(f"❌ Création de l'outil {nom} impossible : {e}")
+
+        logger.info(f"🔧 {len(ids)}/{len(voulus)} outils disponibles pour l'assistant")
+        return ids
 
     def _build_tools_config(self) -> list[dict]:
         """

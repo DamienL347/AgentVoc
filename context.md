@@ -9,7 +9,7 @@
 > de bord est la **vue d'ensemble** ; le détail de chaque point est dans les sections
 > correspondantes. Tout est poussé sur `origin/main` (dépôt `DamienL347/AgentVoc`).
 
-**Suite de tests : 89 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
+**Suite de tests : 116 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
 fournisseurs simulés — aucun coût, aucun SMS réel).
 
 ### Ce qui est fait et validé sans dépense
@@ -23,6 +23,7 @@ fournisseurs simulés — aucun coût, aucun SMS réel).
 | B | Cas d'usage V1 complétés (véhicule prêt, humain, créneau pris, n° masqué) | ✅ |
 | — | Garage en congés (cas 13, détecté via l'agenda Cal.com) | ✅ |
 | — | Latence des outils optimisée (étape 12) | ✅ 122 ms médiane |
+| — | Prompts audités + outils Vapi enfin attachés | ✅ bug critique corrigé |
 | C | Rappels de RDV J-1 et H-2 | ✅ code prêt, activé par Cloud Scheduler |
 | D | Déploiement Cloud Run (Dockerfile + CI/CD) | ✅ prêt, non déployé |
 
@@ -33,10 +34,13 @@ prestation en production :
 2. Cal.com `create_booking` — RDV créés dans **aucun agenda** pendant que l'agent disait « confirmé ».
 3. Cal.com réponses v2 — `calcom_uid` vide → RDV impossibles à modifier/annuler ensuite.
 4. `on_call_ended` — statut métier écrasé → **taux de conversion du dashboard faux**.
+5. **Aucun outil attaché aux assistants Vapi** — l'agent pouvait parler mais ne pouvait
+   RIEN faire (ni agenda, ni RDV, ni transfert). Le plus grave des cinq.
+6. `dispatch_intervention()` — outil inexistant ordonné au prompt dépanneur.
 
 ### Ce qui reste — SANS dépense (faisable maintenant)
-- **Étape 12** : latence ✅ faite (médiane 122 ms, −23 %). Restent le coût réel par appel
-  (besoin d'appels réels) et le réglage des prompts (faisable via le simulateur).
+- **Étape 12** : latence ✅ (122 ms médiane, −23 %) et prompts ✅ audités. Reste le coût
+  réel par appel, qui demande de vrais appels → après souscription.
 - **Limite connue** : `supabase-py` est synchrone → les requêtes se sérialisent sous appels
   simultanés. À arbitrer avant plusieurs clients actifs (voir section étape 12).
 - **RGPD** : l'annonce d'enregistrement est déjà dans le prompt ; reste la politique de
@@ -823,6 +827,71 @@ les accès BDD dans un pool de threads. Chantier à part, à mesurer sous charge
 ### Reste de l'étape 12
 - **Coût réel par appel** : à calculer avec de vraies durées d'appel (les 5 appels en base
   sont des tests). Nécessite quelques appels réels → après souscription.
-- **Qualité vocale / réglage des prompts** : faisable sans dépense via le simulateur.
+
+## 🔴 BUG CRITIQUE corrigé le 17/08/2026 — les assistants Vapi n'avaient AUCUN outil
+
+Découvert en auditant les prompts. Dans `vapi_client.create_assistant`, la ligne qui
+attache les outils était **commentée** :
+
+    #"tools": self._build_tools_config(),
+
+et `_build_tools_config()` n'était appelé **nulle part**. Les 10 définitions d'outils
+étaient du code mort.
+
+**Conséquence** : tout assistant créé par l'onboarding pouvait *parler*, mais ne pouvait ni
+consulter l'agenda, ni prendre un rendez-vous, ni transférer, ni envoyer un SMS. Le prompt
+lui ordonnait « appelle `check_availability()` » pour une fonction que Vapi ne connaissait
+pas — l'agent improvisait. Tout le backend soigné jusqu'ici n'aurait jamais été appelé.
+
+**Cause** : chez Vapi, les outils ne se déclarent pas en ligne dans l'assistant. Il faut les
+créer via `POST /tool`, puis référencer leurs identifiants dans `model.toolIds`. Le format
+des définitions était correct ; c'est l'étape de création qui manquait (d'où le 400 qui a
+probablement conduit à commenter la ligne).
+
+**Correctif** : `vapi_client.ensure_tools()` crée les outils manquants et **réutilise** ceux
+qui existent déjà (vérifié : le 2ᵉ garage onboardé ne recrée pas les 10 outils). Les
+définitions ne contiennent rien de spécifique à un garage — le tenant vient de
+`assistant.metadata.garage_id` — donc un seul jeu sert tous les garages. `create_assistant`
+renseigne désormais `model.toolIds`, et journalise une erreur explicite si la liste est vide.
+
+⚠️ Si un assistant a été configuré **à la main** dans le dashboard Vapi, il a peut-être ses
+outils ; ce sont les assistants créés par l'**onboarding automatique** qui n'en avaient pas.
+À vérifier côté Vapi pour les assistants existants.
+
+## ✅ Réglage des prompts (17/08/2026)
+
+    venv\Scripts\python.exe scripts/inspect_prompt.py            # les 4 types
+    venv\Scripts\python.exe scripts/inspect_prompt.py --afficher # prompt complet
+
+L'audit vérifie sans consommer un seul token : placeholders `{{...}}` oubliés, outils cités
+mais inexistants, outils déclarés mais non documentés, et poids du prompt.
+
+### Défauts trouvés et corrigés — prompt dépanneur
+- **`dispatch_intervention()` n'existe pas.** Le prompt dépanneur ordonnait cet appel à
+  l'étape de confirmation — le cœur du métier d'un dépanneur. Remplacé par le vrai flux :
+  `create_appointment()`, et pour une urgence `send_sms_alert(priority="critique")` puis
+  `transfer_call(reason="urgence")`.
+- **4 outils déclarés jamais documentés** dans ce prompt (`get_appointment_by_phone`,
+  `update_appointment`, `cancel_appointment`, `check_vehicle_status`) : un dépanneur ne
+  pouvait donc ni décaler, ni annuler une intervention. Ajoutés.
+
+### État après correction
+| Type de garage | Tokens estimés | Placeholders | Cohérence outils |
+|---|---|---|---|
+| mecanique_generale | ~3 540 | 0 | 10/10 ✅ |
+| depanneur_remorquage | ~2 080 | 0 | 10/10 ✅ |
+| carrosserie / mixte | ~3 540 | 0 | 10/10 ✅ |
+
+⚠️ **Poids à surveiller** : ~3 500 tokens sont renvoyés au LLM à **chaque tour de parole**.
+Sur un appel de 20 échanges, cela représente ~70 k tokens d'entrée. À condenser si la
+latence du premier mot ou le coût par appel devient un sujet — à mesurer sur de vrais
+appels avant d'y toucher (le prompt caching côté Vapi/Anthropic peut absorber une partie).
+
+Garde-fous : `tests/unit/test_prompt_coherence.py` (27 tests) — les trois défauts ci-dessus
+échouent désormais au lieu de passer inaperçus, sur les 4 types et sur tout futur gabarit.
+Vérifie aussi que chaque outil a une `server.url` correspondant à son nom (sinon l'appel
+arrive sur le mauvais endpoint) et une description assez précise pour guider le choix du LLM.
+
+**Suite complète : 116 tests verts.**
 
 ## ⏳ Étapes suivantes
