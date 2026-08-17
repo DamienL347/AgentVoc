@@ -40,30 +40,27 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
         # Initialiser à None par défaut
         request.state.garage    = None
         request.state.garage_id = None
+        request.state.called_number = None
 
         # Seulement sur les routes Vapi
         if request.url.path.startswith(TENANT_ROUTES):
             try:
-                phone_number = await self._extract_phone_number(request)
-                if phone_number:
-                    garage = await self._resolve_garage(phone_number)
-                    if garage:
-                        request.state.garage    = garage
-                        request.state.garage_id = garage["id"]
-                        logger.debug(
-                            f"[TENANT] ✅ Garage résolu : {garage['name']} "
-                            f"({garage['id']}) pour le numéro {phone_number}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[TENANT] ⚠️ Aucun garage trouvé pour le numéro {phone_number}"
-                        )
-                else:
-                    logger.debug("[TENANT] Pas de numéro Twilio trouvé dans le payload")
+                # On extrait le numéro appelé, mais on NE résout PAS le garage ici.
+                #
+                # Optimisation étape 12 : la résolution coûte un aller-retour
+                # Supabase sur CHAQUE webhook et CHAQUE appel d'outil (~50-150 ms),
+                # pendant lequel l'agent reste muet au téléphone. Or les handlers
+                # identifient le garage par `assistant.metadata.garage_id`, présent
+                # dans le payload : personne ne lisait `request.state.garage`.
+                #
+                # La résolution reste disponible à la demande via
+                # `resolve_garage_from_request()` — utile en secours si un jour un
+                # assistant arrive sans métadonnées.
+                request.state.called_number = await self._extract_phone_number(request)
 
             except Exception as e:
                 # Ne jamais bloquer un appel pour une erreur de résolution
-                logger.error(f"[TENANT] ❌ Erreur résolution tenant : {e}")
+                logger.error(f"[TENANT] ❌ Erreur extraction numéro : {e}")
 
         response = await call_next(request)
         return response
@@ -128,16 +125,44 @@ class TenantResolverMiddleware(BaseHTTPMiddleware):
             return None
 
 
-# ── Helper : récupérer le garage depuis request.state ───────────────────────
+# ── Helpers : accès au garage ────────────────────────────────────────────────
+
+async def resolve_garage_from_request(request: Request) -> Optional[dict]:
+    """
+    Résout le garage à partir du numéro appelé — À LA DEMANDE.
+
+    Coûte une requête Supabase : à n'appeler que si le `garage_id` des
+    métadonnées de l'assistant est absent. Le résultat est mémorisé sur la
+    requête pour qu'un second appel dans le même cycle soit gratuit.
+    """
+    déjà = getattr(request.state, "garage", None)
+    if déjà:
+        return déjà
+
+    numero = getattr(request.state, "called_number", None)
+    if not numero:
+        return None
+
+    middleware = TenantResolverMiddleware.__new__(TenantResolverMiddleware)
+    middleware.supabase = get_supabase_client()
+    garage = await middleware._resolve_garage(numero)
+
+    if garage:
+        request.state.garage    = garage
+        request.state.garage_id = garage["id"]
+        logger.info(f"[TENANT] Garage résolu à la demande : {garage['name']}")
+    else:
+        logger.warning(f"[TENANT] Aucun garage pour le numéro {numero}")
+
+    return garage
+
 
 def get_current_garage(request: Request) -> Optional[dict]:
     """
-    Helper à utiliser dans les endpoints pour accéder au garage résolu.
+    Garage déjà résolu, sans requête réseau.
 
-    Usage dans un endpoint :
-        garage = get_current_garage(request)
-        if garage:
-            garage_id = garage["id"]
+    Retourne None si personne ne l'a résolu : la résolution n'est plus
+    automatique (voir `resolve_garage_from_request`).
     """
     return getattr(request.state, "garage", None)
 

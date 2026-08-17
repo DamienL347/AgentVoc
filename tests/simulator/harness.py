@@ -178,6 +178,12 @@ class CallSimulator:
         self._secret = settings.VAPI_WEBHOOK_SECRET
         fake_transport.reset_log()
 
+        # Le handler met en cache la configuration des garages (60 s). Sans purge,
+        # un test qui modifie son garage lirait une valeur périmée — bug pénible
+        # à diagnostiquer car dépendant de l'ordre des tests.
+        from app.core.call_handler import call_handler
+        call_handler.invalidate_garage_cache()
+
         # Congés éventuels : l'agenda ne renvoie rien avant la réouverture.
         if self.conges_jours is not None:
             from datetime import datetime, timedelta

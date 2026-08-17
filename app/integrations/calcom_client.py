@@ -49,6 +49,26 @@ SLOT_PREFERENCES = {
 }
 
 
+class _ConnexionPartagee:
+    """
+    Enveloppe qui neutralise la fermeture par `async with`.
+
+    Les appelants écrivent `async with self._client() as client:`, ce qui
+    fermerait la connexion partagée à chaque usage. Cette enveloppe la prête
+    sans jamais la fermer : c'est `CalComClient.close()`, au shutdown de
+    l'application, qui la libère.
+    """
+
+    def __init__(self, client: httpx.AsyncClient):
+        self._client = client
+
+    async def __aenter__(self) -> httpx.AsyncClient:
+        return self._client
+
+    async def __aexit__(self, *exc) -> bool:
+        return False   # ne ferme pas, ne masque pas les exceptions
+
+
 class CalComClient:
     """
     Client pour l'API Cal.com v2.
@@ -62,21 +82,38 @@ class CalComClient:
             "Content-Type":  "application/json",
             "cal-api-version": "2024-08-13",
         }
+        self._shared: Optional[httpx.AsyncClient] = None
 
-    def _client(self) -> httpx.AsyncClient:
-        # En PROVIDER_MODE=fake, un transport factice répond à la place du réseau :
-        # le parsing des créneaux et le formatage FR restent le vrai code.
-        transport = None
-        if settings.use_fake_providers:
-            from app.integrations.fake_transport import calcom_transport
-            transport = calcom_transport()
+    def _client(self) -> "_ConnexionPartagee":
+        """
+        Connexion HTTP **persistante** vers Cal.com.
 
-        return httpx.AsyncClient(
-            base_url=self.base_url,
-            headers=self.headers,
-            timeout=TIMEOUT,
-            transport=transport,
-        )
+        Optimisation étape 12 : un `AsyncClient` neuf par appel rouvrait une
+        connexion TLS à chaque fois (poignée de main complète, ~100-200 ms à
+        froid) — temps payé en plein pendant que l'agent attend pour annoncer
+        les créneaux au client. En la réutilisant, la connexion reste chaude.
+        """
+        if self._shared is None:
+            # En PROVIDER_MODE=fake, un transport factice répond à la place du
+            # réseau : parsing des créneaux et formatage FR restent le vrai code.
+            transport = None
+            if settings.use_fake_providers:
+                from app.integrations.fake_transport import calcom_transport
+                transport = calcom_transport()
+
+            self._shared = httpx.AsyncClient(
+                base_url=self.base_url,
+                headers=self.headers,
+                timeout=TIMEOUT,
+                transport=transport,
+            )
+        return _ConnexionPartagee(self._shared)
+
+    async def close(self) -> None:
+        """Libère la connexion partagée (appelé au shutdown de l'application)."""
+        if self._shared is not None:
+            await self._shared.aclose()
+            self._shared = None
 
     # ── Disponibilités ───────────────────────────────────────
 

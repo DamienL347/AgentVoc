@@ -54,11 +54,30 @@ class CallHandler:
     Appelé par les routes webhook FastAPI.
     """
 
+    # Plafond du cache vapi_call_id → calls.id (voir _remember_call_id)
+    MAX_CACHE_ENTRIES = 500
+
+    # Configuration du garage : champs lus par les handlers. Un seul jeu pour
+    # toutes les lectures, afin qu'une seule requête serve tout le monde.
+    GARAGE_FIELDS = (
+        "id, name, phone_number, email, business_hours, "
+        "transfer_phone_number, transfer_sms_number, "
+        "calcom_event_type_id, calcom_username, status"
+    )
+    # Durée de vie du cache de configuration. Ces données changent rarement
+    # (horaires, numéro de transfert) ; en contrepartie, une modification côté
+    # garage met jusqu'à ce délai à être prise en compte.
+    GARAGE_CACHE_TTL = 60.0   # secondes
+
     def __init__(self):
         self.db     = None  # Initialisé au runtime
         self.twilio = None
         self.calcom = None
         self.resend = None
+        # Évite de relire le même lien vapi_call_id → calls.id à chaque outil
+        self._call_id_cache: dict[str, str] = {}
+        # Configuration garage : {garage_id: (expiration, données)}
+        self._garage_cache: dict[str, tuple[float, dict]] = {}
 
     def _lazy_init(self):
         """Import tardif pour éviter les imports circulaires."""
@@ -97,6 +116,7 @@ class CallHandler:
         )
         if existing_call.data:
             logger.info(f"♻️ Appel {vapi_call_id} déjà enregistré, webhook ignoré")
+            self._remember_call_id(vapi_call_id, existing_call.data[0]["id"])
             return {
                 "call_id":         existing_call.data[0]["id"],
                 "is_known_client": existing_call.data[0].get("end_client_id") is not None,
@@ -126,6 +146,11 @@ class CallHandler:
 
         call_id = result.data[0]["id"] if result.data else None
         logger.info(f"✅ Appel enregistré en BDD : {call_id}")
+
+        # Mémorisé dès maintenant : les outils appelés pendant la conversation
+        # n'auront pas à relire ce lien en base.
+        if call_id:
+            self._remember_call_id(vapi_call_id, call_id)
 
         return {
             "call_id":         call_id,
@@ -592,24 +617,15 @@ class CallHandler:
         summary = parameters.get("summary", "")
 
         # Récupérer le numéro de transfert du garage
-        garage = (
-            self.db.table("garages")
-            .select("transfer_phone_number, transfer_sms_number, name, business_hours")
-            .eq("id", str(garage_id))
-            .single()
-            .execute()
-        )
-
-        transfer_phone = None
-        if garage.data:
-            transfer_phone = garage.data.get("transfer_phone_number")
+        garage_data = self._garage_config(garage_id)
+        transfer_phone = garage_data.get("transfer_phone_number")
 
         # Transférer vers un téléphone qui ne décrochera pas est pire que ne pas
         # transférer : le client, souvent déjà mécontent ou en urgence, tombe
         # dans le vide. Sans numéro configuré ou hors horaires, on le dit et on
         # bascule sur la prise de message.
         from app.utils.business_hours import is_open_at, next_opening_fr
-        ouvert = is_open_at((garage.data or {}).get("business_hours"))
+        ouvert = is_open_at(garage_data.get("business_hours"))
 
         if not transfer_phone or not ouvert:
             motif = "aucun numéro de transfert configuré" if not transfer_phone \
@@ -624,7 +640,7 @@ class CallHandler:
                 "call_status":        CallStatus.TRANSFERE_HUMAIN.value,
             }).eq("vapi_call_id", vapi_call_id).execute()
 
-            quand = next_opening_fr((garage.data or {}).get("business_hours"))
+            quand = next_opening_fr(garage_data.get("business_hours"))
             return {
                 "success":        True,
                 "action":         "take_message",
@@ -644,9 +660,9 @@ class CallHandler:
         }).eq("vapi_call_id", vapi_call_id).execute()
 
         # Envoyer alerte SMS si urgence ou réclamation
-        if reason in ["urgence", "reclamation"] and garage.data:
+        if reason in ["urgence", "reclamation"] and garage_data:
             from app.services.notification_service import notification_service
-            sms_number = garage.data.get("transfer_sms_number")
+            sms_number = garage_data.get("transfer_sms_number")
             if sms_number:
                 await notification_service.send_sms(
                     to=sms_number,
@@ -684,24 +700,18 @@ class CallHandler:
         priority = parameters.get("priority", "normale")
         message  = parameters.get("message", "")
 
-        # Récupérer le numéro d'alerte du garage
-        garage = (
-            self.db.table("garages")
-            .select("transfer_sms_number, name")
-            .eq("id", str(garage_id))
-            .single()
-            .execute()
-        )
+        # Configuration du garage (mise en cache : voir _garage_config)
+        garage_data = self._garage_config(garage_id)
 
-        if not garage.data or not garage.data.get("transfer_sms_number"):
+        if not garage_data.get("transfer_sms_number"):
             logger.warning(f"⚠️ Pas de numéro SMS configuré pour garage {garage_id}")
             return {"success": False, "message": "Numéro d'alerte non configuré"}
 
         emoji = {"critique": "🚨", "elevee": "⚠️", "normale": "📱"}.get(priority, "📱")
 
         await notification_service.send_sms(
-            to=garage.data["transfer_sms_number"],
-            body=f"{emoji} [{priority.upper()}] {garage.data['name']}\n{message}",
+            to=garage_data["transfer_sms_number"],
+            body=f"{emoji} [{priority.upper()}] {garage_data['name']}\n{message}",
             garage_id=garage_id,
             recipient_type="garage",
             call_id=self._get_call_id(vapi_call_id),
@@ -730,14 +740,7 @@ class CallHandler:
 
         client_phone = parameters.get("client_phone") or self._get_caller_phone(vapi_call_id)
 
-        garage = (
-            self.db.table("garages")
-            .select("name, business_hours, transfer_phone_number")
-            .eq("id", str(garage_id))
-            .single()
-            .execute()
-        )
-        donnees = garage.data or {}
+        donnees = self._garage_config(garage_id)
         ouvert  = is_open_at(donnees.get("business_hours"))
 
         # Contexte utile pour la personne qui reprendra l'appel
@@ -814,17 +817,11 @@ class CallHandler:
         }).eq("vapi_call_id", vapi_call_id).execute()
 
         # Alerter le patron par SMS
-        garage = (
-            self.db.table("garages")
-            .select("transfer_sms_number")
-            .eq("id", str(garage_id))
-            .single()
-            .execute()
-        )
+        garage_data = self._garage_config(garage_id)
 
-        if garage.data and garage.data.get("transfer_sms_number"):
+        if garage_data.get("transfer_sms_number"):
             await notification_service.send_sms(
-                to=garage.data["transfer_sms_number"],
+                to=garage_data["transfer_sms_number"],
                 body=(
                     f"📝 MESSAGE\n"
                     f"De : {client_name} - {client_phone}\n"
@@ -929,7 +926,16 @@ class CallHandler:
         """
         Traduit l'id d'appel Vapi en UUID interne (`calls.id`).
         Sert à rattacher les notifications à l'appel qui les a déclenchées.
+
+        Mis en cache : ce lien est figé pour la durée de l'appel, alors que la
+        plupart des outils en ont besoin. Sans cache, chaque outil payait un
+        aller-retour Supabase (~50-150 ms) pour relire la même valeur — du
+        silence pur au téléphone. Le cache est opportuniste : sur une autre
+        instance Cloud Run, on refait simplement la requête une fois.
         """
+        if vapi_call_id in self._call_id_cache:
+            return self._call_id_cache[vapi_call_id]
+
         self._lazy_init()
         try:
             result = (
@@ -940,10 +946,73 @@ class CallHandler:
                 .execute()
             )
             if result.data:
-                return result.data[0]["id"]
+                return self._remember_call_id(vapi_call_id, result.data[0]["id"])
         except Exception as e:
             logger.warning(f"⚠️ Impossible de résoudre call_id pour {vapi_call_id} : {e}")
         return None
+
+    def _garage_config(self, garage_id: UUID) -> dict:
+        """
+        Configuration du garage, mise en cache brièvement.
+
+        Presque tous les outils ont besoin des mêmes champs (nom, horaires,
+        numéro de transfert) : sans cache, chacun payait son propre aller-retour
+        Supabase pour relire des données qui ne bougent quasiment jamais.
+
+        Retourne {} si le garage est introuvable — les appelants doivent le
+        traiter comme une configuration absente, pas comme une erreur fatale.
+        """
+        import time
+
+        cle = str(garage_id)
+        entree = self._garage_cache.get(cle)
+        if entree and entree[0] > time.monotonic():
+            return entree[1]
+
+        self._lazy_init()
+        try:
+            res = (
+                self.db.table("garages")
+                .select(self.GARAGE_FIELDS)
+                .eq("id", cle)
+                .single()
+                .execute()
+            )
+            donnees = res.data or {}
+        except Exception as e:
+            logger.error(f"❌ Lecture de la configuration du garage {cle} impossible : {e}")
+            return {}
+
+        if len(self._garage_cache) >= self.MAX_CACHE_ENTRIES:
+            self._garage_cache.clear()
+        self._garage_cache[cle] = (time.monotonic() + self.GARAGE_CACHE_TTL, donnees)
+        return donnees
+
+    def invalidate_garage_cache(self, garage_id: Optional[UUID] = None) -> None:
+        """
+        Purge la configuration en cache — à appeler après modification d'un
+        garage (onboarding, changement de numéro de transfert) pour ne pas
+        attendre l'expiration.
+        """
+        if garage_id is None:
+            self._garage_cache.clear()
+        else:
+            self._garage_cache.pop(str(garage_id), None)
+
+    def _remember_call_id(self, vapi_call_id: str, call_id: str) -> str:
+        """
+        Mémorise le lien vapi_call_id → calls.id.
+
+        Borné à MAX_CACHE_ENTRIES : un processus Cloud Run vit longtemps et
+        traite des milliers d'appels, un dictionnaire sans limite finirait par
+        peser sur la mémoire de l'instance.
+        """
+        if len(self._call_id_cache) >= self.MAX_CACHE_ENTRIES:
+            # Purge simple : on repart à neuf plutôt que de gérer un LRU pour un
+            # cache dont la perte ne coûte qu'une requête.
+            self._call_id_cache.clear()
+        self._call_id_cache[vapi_call_id] = call_id
+        return call_id
 
     def _get_caller_phone(self, vapi_call_id: str) -> Optional[str]:
         """Retourne le numéro réel de l'appelant (caller ID), normalisé E.164."""

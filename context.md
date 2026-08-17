@@ -22,6 +22,7 @@ fournisseurs simulés — aucun coût, aucun SMS réel).
 | A | Simulateur d'appel (`scripts/simulate_call.py`) | ✅ 7 scénarios |
 | B | Cas d'usage V1 complétés (véhicule prêt, humain, créneau pris, n° masqué) | ✅ |
 | — | Garage en congés (cas 13, détecté via l'agenda Cal.com) | ✅ |
+| — | Latence des outils optimisée (étape 12) | ✅ 122 ms médiane |
 | C | Rappels de RDV J-1 et H-2 | ✅ code prêt, activé par Cloud Scheduler |
 | D | Déploiement Cloud Run (Dockerfile + CI/CD) | ✅ prêt, non déployé |
 
@@ -34,7 +35,10 @@ prestation en production :
 4. `on_call_ended` — statut métier écrasé → **taux de conversion du dashboard faux**.
 
 ### Ce qui reste — SANS dépense (faisable maintenant)
-- **Étape 12 — Optimisation** : latence < 800 ms, coût réel par appel, réglage des prompts.
+- **Étape 12** : latence ✅ faite (médiane 122 ms, −23 %). Restent le coût réel par appel
+  (besoin d'appels réels) et le réglage des prompts (faisable via le simulateur).
+- **Limite connue** : `supabase-py` est synchrone → les requêtes se sérialisent sous appels
+  simultanés. À arbitrer avant plusieurs clients actifs (voir section étape 12).
 - **RGPD** : l'annonce d'enregistrement est déjà dans le prompt ; reste la politique de
   confidentialité et la durée de conservation.
 
@@ -761,4 +765,64 @@ l'agenda simulé jusqu'à J+N (via `fake_transport.set_closure`, remis à zéro 
 
 Tests : `tests/integration/test_scenarios_conges.py` (5). **Suite complète : 89 tests verts.**
 
-## ⏳ Étape 12 — Optimisation (À FAIRE)
+## ✅ Étape 12 — Optimisation de la latence (17/08/2026)
+
+Enjeu : pendant qu'un outil répond, **l'agent est muet au téléphone**. Le budget d'un tour
+de parole (~800 ms) se partage entre STT, LLM, TTS et notre backend : chaque milliseconde
+ici est prise sur les autres.
+
+    venv\Scripts\python.exe scripts/measure_latency.py --iterations 15
+
+### Résultats mesurés (15 itérations, Supabase réel)
+
+| | Avant | Après | Gain |
+|---|---|---|---|
+| Médiane globale | 159 ms | **122 ms** | −23 % |
+| Pire outil | 212 ms | **136 ms** | −36 % |
+| Requêtes Supabase cumulées | 18 | **12** | −33 % |
+| Outils au-delà de 400 ms | 0 | 0 | — |
+
+Le constat qui a guidé le travail : **la latence est quasi proportionnelle au nombre de
+requêtes Supabase** (~50-60 ms par aller-retour depuis un poste de dev). Le levier n'est pas
+d'« optimiser le code » mais de supprimer des allers-retours.
+
+### Les quatre optimisations
+1. **Middleware tenant resolver rendu paresseux** — il appelait `get_garage_by_phone` (1
+   requête) sur *chaque* webhook et *chaque* appel d'outil, alors que `request.state.garage`
+   n'était **lu par personne** : les handlers identifient le garage via
+   `assistant.metadata.garage_id`, déjà présent dans le payload. La résolution reste
+   disponible à la demande (`resolve_garage_from_request`) en secours.
+2. **Cache `vapi_call_id → calls.id`** — ce lien est figé pour la durée de l'appel, et
+   presque tous les outils en ont besoin. Il est mémorisé dès `on_call_started`, donc plus
+   aucun outil ne le relit. Cache borné (500 entrées), opportuniste : sur une autre instance
+   Cloud Run, on refait simplement la requête une fois.
+3. **Cache de configuration du garage (TTL 60 s)** — nom, horaires, numéros de transfert
+   étaient relus par chaque outil. Un seul jeu de champs sert toutes les lectures.
+   ⚠️ Contrepartie : une modification côté garage met jusqu'à 60 s à être prise en compte ;
+   `call_handler.invalidate_garage_cache(garage_id)` force la purge.
+4. **Connexion Cal.com persistante** — un `AsyncClient` neuf par appel rouvrait une
+   connexion TLS à chaque fois (~100-200 ms à froid). Invisible en mode simulé, **réel en
+   production**. L'enveloppe `_ConnexionPartagee` évite que `async with` ne ferme la
+   connexion, sans toucher aux 5 sites d'appel. Libérée au shutdown de l'app.
+
+### Portée de la mesure — à lire avant d'en tirer des conclusions
+- **Couvre** : notre code + les allers-retours Supabase (réels).
+- **Ne couvre pas** : le réseau vers Cal.com/Twilio (simulé), ni STT/LLM/TTS (chez Vapi).
+  Le chiffre est donc un **plancher** ; en production, ajouter la latence Cal.com sur les
+  outils qui l'appellent.
+- Depuis Cloud Run en `europe-west1`, les requêtes Supabase seront **plus rapides** que
+  depuis un poste de dev (proximité réseau) : ces chiffres sont pessimistes.
+
+### ⚠️ Limite d'architecture repérée (non corrigée, à arbitrer)
+`supabase-py` est **synchrone** : chaque requête bloque la boucle asyncio pendant son
+aller-retour. Sans conséquence sur un appel isolé (ce que mesure le script), mais sous
+appels simultanés les requêtes se sérialisent au lieu de se recouvrir. À traiter avant de
+monter à plusieurs clients actifs — soit via le client async de Supabase, soit en déportant
+les accès BDD dans un pool de threads. Chantier à part, à mesurer sous charge concurrente.
+
+### Reste de l'étape 12
+- **Coût réel par appel** : à calculer avec de vraies durées d'appel (les 5 appels en base
+  sont des tests). Nécessite quelques appels réels → après souscription.
+- **Qualité vocale / réglage des prompts** : faisable sans dépense via le simulateur.
+
+## ⏳ Étapes suivantes

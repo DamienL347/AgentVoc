@@ -56,8 +56,10 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── Shutdown ─────────────────────────────────────────────
+    from app.integrations.calcom_client import calcom_client
     from app.integrations.vapi_client import vapi_client
     await vapi_client.close()
+    await calcom_client.close()   # connexion Cal.com persistante
     logger.info("👋 Arrêt de l'application")
 
 
