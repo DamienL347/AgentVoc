@@ -9,7 +9,7 @@
 > de bord est la **vue d'ensemble** ; le détail de chaque point est dans les sections
 > correspondantes. Tout est poussé sur `origin/main` (dépôt `DamienL347/AgentVoc`).
 
-**Suite de tests : 130 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
+**Suite de tests : 140 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
 fournisseurs simulés — aucun coût, aucun SMS réel).
 
 ### Ce qui est fait et validé sans dépense
@@ -25,6 +25,7 @@ fournisseurs simulés — aucun coût, aucun SMS réel).
 | — | Latence des outils optimisée (étape 12) | ✅ 122 ms médiane |
 | — | Prompts audités + outils Vapi enfin attachés | ✅ bug critique corrigé |
 | — | RGPD : purge automatique + droit à l'effacement | ✅ code fait, contrats à rédiger |
+| — | Réglages Vapi éprouvés reportés dans le code | ✅ (voix corrigée) |
 | C | Rappels de RDV J-1 et H-2 | ✅ code prêt, activé par Cloud Scheduler |
 | D | Déploiement Cloud Run (Dockerfile + CI/CD) | ✅ prêt, non déployé |
 
@@ -951,5 +952,54 @@ Un garage `SIM Garage` résiduel traînait dans la base réelle, laissé par une
 le `__exit__` du harnais (le `NameError` a empêché la suppression). Supprimé — 19 garages,
 plus aucun appel anonymisé résiduel. Le `__exit__` isole désormais chaque étape de
 nettoyage pour qu'une erreur n'empêche plus la suppression du garage de test.
+
+## ✅ Réglages Vapi relevés sur l'assistant manuel (17/08/2026)
+
+    venv\Scripts\python.exe scripts/read_vapi_config.py            # lecture seule
+    venv\Scripts\python.exe scripts/read_vapi_config.py --json     # secrets masqués
+
+Les assistants de test ont été réglés à la main (latence, tokens, voix) alors que
+`create_assistant` imposait ses propres valeurs. Chaque garage onboardé repartait donc
+avec des réglages non éprouvés. Lecture de la config réelle chez Vapi (5 assistants) et
+report dans le code, désormais **configurable** via `.env` plutôt que codé en dur.
+
+### Écarts trouvés entre le code et l'assistant « Lumy » (réglé à la main)
+| Réglage | Code (avant) | Lumy | Retenu |
+|---|---|---|---|
+| `temperature` | 0.3 | **0.4** | 0.4 (`VAPI_TEMPERATURE`) |
+| `voiceId` | `65b25c5d…` (.env) | **`a8a1eb38…`** | **a8a1eb38** — la voix choisie |
+| délai de parole | `responseDelaySeconds` | **`startSpeakingPlan.waitSeconds`** | startSpeakingPlan |
+| repli transcription | absent | **`autoFallback` activé** | activé |
+| `voice.language` | `"fr"` forcé | absent | retiré |
+| résumé d'appel | absent | désactivé | **activé** (voir ci-dessous) |
+
+⚠️ **La voix était le plus gros écart** : `.env` pointait vers `65b25c5d…` alors que la voix
+retenue est `a8a1eb38…`. Tous les garages onboardés parlaient donc avec une autre voix que
+celle validée. Corrigé dans `.env`.
+
+`responseDelaySeconds` est l'ancien champ Vapi ; l'assistant manuel utilise
+`startSpeakingPlan`. Envoyer un champ obsolète expose à voir le réglage ignoré sans erreur.
+
+### Deux défauts trouvés DANS la configuration manuelle (non reportés)
+- **`endCallPhrases` avec guillemets** : saisies `"Au revoir"` — les guillemets font partie
+  du texte recherché, donc la détection de fin d'appel ne pouvait **jamais** correspondre à
+  ce que dit un client. Le code utilise des phrases sans guillemets.
+- **`endCallMessage` = « Goodbye. »** : le défaut anglais de Vapi, en pleine conversation
+  française. Remplacé par « Merci de votre appel, bonne journée ! », et un message de
+  répondeur en français ajouté.
+
+### Arbitrage assumé : le résumé d'appel
+L'assistant manuel avait **désactivé** `summaryPlan` (économie d'un appel LLM par
+conversation). Or ce résumé alimente `calls.summary`, affiché dans la colonne « Résumé » du
+dashboard : le désactiver vide cette colonne. Choix retenu : **activé par défaut**, mais
+piloté par `VAPI_ENABLE_SUMMARY` pour que l'arbitrage coût / visibilité reste explicite.
+`successEvaluationPlan` reste désactivé — analyse facturée que rien n'exploite.
+
+### Confirmation du bug de la veille, en conditions réelles
+Les 5 assistants présents chez Vapi ont **`outils attachés : 0`**. Le correctif d'hier
+(`ensure_tools` + `model.toolIds`) ne s'appliquera qu'aux **nouveaux** assistants : les
+existants doivent être recréés ou mis à jour pour recevoir les outils.
+
+Tests : `tests/unit/test_vapi_assistant_config.py` (10). **140 tests verts.**
 
 ## ⏳ Étapes suivantes

@@ -43,6 +43,19 @@ class Settings(BaseSettings):
     VAPI_ASSISTANT_ID:    str = ""
     VAPI_API_BASE_URL:    str = "https://api.vapi.ai"
 
+    # Réglages de l'agent, relevés sur l'assistant « Lumy » réglé à la main
+    # (scripts/read_vapi_config.py). Ils étaient codés en dur et différents,
+    # donc chaque garage onboardé repartait avec des valeurs non éprouvées.
+    VAPI_TEMPERATURE:   float = 0.4   # 0.3 dans l'ancien code
+    VAPI_MAX_TOKENS:    int   = 250
+    # Délai avant que l'agent prenne la parole. `responseDelaySeconds` est
+    # l'ancien champ Vapi ; le réglage actuel passe par startSpeakingPlan.
+    VAPI_WAIT_SECONDS:  float = 0.5
+    # Résumé d'appel généré par Vapi en fin d'appel. Il alimente `calls.summary`,
+    # affiché dans le dashboard. Le désactiver économise un appel LLM par
+    # conversation, mais vide la colonne « Résumé » : arbitrage coût / visibilité.
+    VAPI_ENABLE_SUMMARY: bool = True
+
     # ── Deepgram ─────────────────────────────────────────────
     DEEPGRAM_API_KEY: str = ""
 

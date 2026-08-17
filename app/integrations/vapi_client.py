@@ -87,8 +87,8 @@ class VapiClient:
             "model": {
                 "provider":    "anthropic",
                 "model":       "claude-haiku-4-5-20251001",
-                "temperature": 0.3,
-                "maxTokens":   250,
+                "temperature": settings.VAPI_TEMPERATURE,
+                "maxTokens":   settings.VAPI_MAX_TOKENS,
                 "messages": [
                     {
                         "role":    "system",
@@ -98,11 +98,13 @@ class VapiClient:
             },
 
             # ── Voix : Cartesia Sonic ───────────────────────
+            # `language` n'est volontairement pas transmis : l'assistant réglé à
+            # la main ne le renseigne pas, sonic-multilingual détecte la langue
+            # depuis le texte.
             "voice": {
                 "provider": "cartesia",
                 "voiceId":  voice_id or settings.CARTESIA_VOICE_ID_FR,
                 "model":    settings.CARTESIA_MODEL,
-                "language": "fr",
             },
 
             # ── Transcription : Deepgram Nova-2 ────────────
@@ -110,6 +112,10 @@ class VapiClient:
                 "provider": "deepgram",
                 "model":    "nova-2",
                 "language": "fr",
+                # Bascule automatique vers un moteur de secours si Deepgram
+                # échoue : sans cela, une panne du prestataire rend l'agent
+                # sourd et l'appel est perdu.
+                "fallbackPlan": {"autoFallback": {"enabled": True}},
             },
 
             # ── Premier message ─────────────────────────────
@@ -119,9 +125,17 @@ class VapiClient:
             "maxDurationSeconds":      settings.MAX_CALL_DURATION_SECONDS,
             "backgroundDenoisingEnabled": True,
             "recordingEnabled":        settings.ENABLE_CALL_RECORDING,
-            "responseDelaySeconds":    0.5,
+
+            # Délai avant prise de parole. Remplace `responseDelaySeconds`,
+            # l'ancien champ : envoyer un champ obsolète, c'est risquer que le
+            # réglage soit ignoré sans aucun message d'erreur.
+            "startSpeakingPlan": {"waitSeconds": settings.VAPI_WAIT_SECONDS},
 
             # ── Fin d'appel automatique ─────────────────────
+            # Sans guillemets dans les chaînes : sur l'assistant réglé à la main,
+            # les phrases étaient saisies `"Au revoir"` — les guillemets faisaient
+            # partie du texte recherché, donc la détection ne pouvait jamais
+            # correspondre à ce que dit réellement un client.
             "endCallPhrases": [
                 "au revoir",
                 "bonne journée",
@@ -129,6 +143,22 @@ class VapiClient:
                 "à bientôt",
                 "merci au revoir",
             ],
+
+            # Messages de fin, en français (l'assistant manuel avait conservé le
+            # « Goodbye. » par défaut de Vapi, en pleine conversation française).
+            "endCallMessage":   "Merci de votre appel, bonne journée !",
+            "voicemailMessage": (
+                "Bonjour, vous êtes sur le répondeur. "
+                "Rappelez-nous quand vous serez disponible."
+            ),
+
+            # Résumé d'appel : alimente `calls.summary` et la colonne « Résumé »
+            # du dashboard. Désactivable pour économiser un appel LLM par
+            # conversation — au prix de la visibilité (voir VAPI_ENABLE_SUMMARY).
+            "analysisPlan": {
+                "summaryPlan":           {"enabled": settings.VAPI_ENABLE_SUMMARY},
+                "successEvaluationPlan": {"enabled": False},
+            },
 
             # ── Métadonnées ─────────────────────────────────
             # C'est par ici que le backend identifie le tenant à chaque webhook
