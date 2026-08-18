@@ -3,7 +3,7 @@
 
 ---
 
-## 📊 État du projet — mis à jour le 17/08/2026
+## 📊 État du projet — mis à jour le 18/08/2026
 
 > Les sections détaillées plus bas sont datées du 14/08 (session de travail). Ce tableau
 > de bord est la **vue d'ensemble** ; le détail de chaque point est dans les sections
@@ -142,9 +142,20 @@ AgentVoc/
 │   │   ├── calcom_client.py       ✅ Client Cal.com v2
 │   │   ├── twilio_sms.py          ✅ Client Twilio SMS
 │   │   └── resend_email.py        ✅ Client Resend emails HTML
+│   ├── middleware/
+│   │   └── tenant_resolver.py     ✅ Résolution du tenant (paresseuse, étape 12)
 │   ├── models/
 │   │   ├── __init__.py
 │   │   └── schemas.py             ✅ Modèles Pydantic
+│   ├── services/
+│   │   ├── onboarding_service.py  ✅ Orchestration onboarding 5 étapes
+│   │   ├── notification_service.py ✅ Envoi + traçabilité SMS/emails
+│   │   ├── reminder_service.py    ✅ Rappels J-1 / H-2
+│   │   └── retention_service.py   ✅ RGPD : purge + droit à l'effacement
+│   ├── utils/
+│   │   ├── business_hours.py      ✅ Horaires : ouvert ? prochaine ouverture ?
+│   │   ├── datetime_fr.py         ✅ Formatage FR
+│   │   └── phone.py               ✅ E.164 + détection numéro masqué
 │   └── prompts/
 │       ├── __init__.py
 │       ├── system_prompt.py       ✅ Moteur génération dynamique
@@ -152,15 +163,32 @@ AgentVoc/
 │           ├── garage_mecanique_v1.txt   ✅ Prompt garagiste
 │           └── depanneur_v1.txt          ✅ Prompt dépanneur
 ├── scripts/
-│   ├── setup_supabase_v2.sql      ✅ Schéma BDD complet (exécuté)
-│   └── seed_data.sql              ✅ Données de test (injectées)
+│   ├── schema.sql                 ✅ Schéma BDD versionné (10 tables)
+│   ├── dump_schema.py / export_schema.sql / csv_to_schema.py  ✅ Régénération
+│   ├── simulate_call.py           ✅ Simulateur d'appel (8 scénarios)
+│   ├── measure_latency.py         ✅ Mesure de latence des outils
+│   ├── inspect_prompt.py          ✅ Audit des prompts
+│   ├── read_vapi_config.py        ✅ Lecture config Vapi (lecture seule)
+│   ├── migrate_vapi_assistants.py ✅ Migration des assistants existants
+│   ├── send_reminders.py          ✅ Rappels de RDV
+│   └── rgpd.py                    ✅ Purge + effacement RGPD
 ├── tests/
+│   ├── unit/                      ✅ 148 tests au total
+│   ├── integration/               ✅ rejoués contre la vraie base
+│   └── simulator/                 ✅ harnais d'appel simulé
 ├── docs/
+│   ├── DEPLOIEMENT.md             ✅ Cloud Run, secrets, Cloud Scheduler
+│   └── RGPD.md                    ✅ Conservation, effacement, sous-traitants
 ├── venv/
 ├── .env                           ✅ Toutes les clés configurées
 ├── .env.example                   ✅ Template
 ├── .gitignore                     ✅
-├── requirements.txt               ✅
+├── Dockerfile / .dockerignore     ✅ Image de production
+├── .github/workflows/             ✅ CI + déploiement manuel
+├── dashboard.py / dashboard_theme.py  ✅ Dashboard interne (Streamlit)
+├── requirements.txt               ✅ backend seul (11 paquets)
+├── requirements-dev.txt           ✅ tests, lint, scripts
+├── requirements-dashboard.txt     ✅ streamlit, plotly, pandas
 └── README.md                      ✅
 ```
 
@@ -168,10 +196,12 @@ AgentVoc/
 
 ## 🗄️ Base de données Supabase
 
-**9 tables créées et opérationnelles :**
+**10 tables créées et opérationnelles :**
 
 ```
 garages              → Clients de la plateforme (multi-tenant)
+                       + colonnes multi-tenant (twilio_phone_number, vapi_assistant_id,
+                         calcom_event_type_id, onboarding_status…)
 garage_services      → Services proposés par garage
 end_clients          → Clients finaux des garages
 vehicles             → Véhicules des clients
@@ -180,7 +210,9 @@ appointments         → Rendez-vous pris/modifiés/annulés
 notifications        → SMS et emails envoyés
 agent_prompts        → Prompts versionnés par garage
 audit_logs           → Traçabilité complète
+onboarding_logs      → Traçabilité étape par étape de l'onboarding
 ```
+> Schéma complet et versionné : `scripts/schema.sql` (régénérable, voir §Export du schéma).
 
 **Fonctionnalités BDD :**
 - ✅ Row Level Security (RLS) multi-tenant
@@ -194,16 +226,16 @@ audit_logs           → Traçabilité complète
 
 ## 🎙️ Agent Vapi configuré
 
-**Assistant créé dans Vapi avec :**
-- LLM : Claude Haiku (temperature 0.3, max 250 tokens)
-- STT : Deepgram Nova-2 FR
-- TTS : Cartesia Sonic Multilingual (voix FR choisie)
-- First message : "Bonjour, je suis Léa du Garage Martin. Comment puis-je vous aider ?"
-- Background denoising : ON
-- Call recording : ON
-- Max duration : 600s
+**Assistant créé dans Vapi avec** (réglages relevés sur « Lumy », voir §Réglages Vapi) :
+- LLM : Claude Haiku — **temperature 0.4**, max 250 tokens (configurables dans `.env`)
+- STT : Deepgram Nova-2 FR + repli automatique
+- TTS : Cartesia Sonic Multilingual — voix `a8a1eb38…`
+- First message : "Bonjour, je suis Léa du Garage Martin. **Cet appel peut être
+  enregistré.** Comment puis-je vous aider ?" (mention RGPD obligatoire)
+- `startSpeakingPlan.waitSeconds` 0.5 · denoising ON · recording ON · 600 s max
+- Messages de fin et de répondeur en français · résumé d'appel activé
 
-**9 tools configurés :**
+**10 tools configurés** (attachés via `model.toolIds` — voir le bug critique du 17/08) :
 ```
 check_availability       → Vérifie créneaux Cal.com
 create_appointment       → Crée RDV Cal.com + Supabase
@@ -213,6 +245,7 @@ cancel_appointment       → Annule un RDV
 send_confirmation        → SMS + email confirmation
 transfer_call            → Transfère vers patron
 send_sms_alert           → Alerte SMS urgence
+check_vehicle_status     → « Ma voiture est-elle prête ? » → transfert ou message
 take_message             → Message pour rappel
 ```
 
@@ -228,7 +261,17 @@ take_message             → Message pour rappel
 | Cas 4 | Modification/annulation RDV | ✅ |
 | Cas 5 | Dépannage non urgent | ✅ |
 | Cas 8 | Détection mécontentement → transfert | ✅ |
+| Cas 9 | « Ma voiture est-elle prête ? » → mise en relation ou message | ✅ |
+| Cas 10 | Le client veut un humain → transfert immédiat (ou message si fermé) | ✅ |
+| Cas 11 | Numéro masqué → demander le numéro avant toute promesse | ✅ |
+| Cas 12 | Créneau pris pendant l'appel → détection de chevauchement | ✅ |
+| Cas 13 | Garage en congés → annonce de la réouverture + créneaux | ✅ |
 | Urgence | Escalation path 24/7 | ✅ |
+| — | Rappels automatiques J-1 et H-2 | ✅ |
+
+> Hors périmètre V1, assumé : démarchage téléphonique, clients non francophones,
+> devis détaillé (dépend du logiciel d'atelier du garage). À arbitrer avec les
+> premiers testeurs plutôt qu'à deviner.
 
 ---
 
