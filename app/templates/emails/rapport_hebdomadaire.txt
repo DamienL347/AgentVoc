@@ -1,0 +1,54 @@
+Version texte du rapport hebdomadaire.
+
+Pourquoi ce fichier : un email envoye sans partie texte part plus souvent en
+indesirable, et certains clients (ou reglages d'entreprise) n'affichent pas le
+HTML. Memes variables {{...}} que la version HTML : les deux doivent etre
+modifiees ensemble.
+
+--- couper ici : ce qui suit est le corps du message -------------------------
+
+AGENTLUMY - RAPPORT HEBDOMADAIRE
+{{GARAGE_NAME}}
+Du {{PERIODE_DEBUT}} au {{PERIODE_FIN}}
+
+===============================================================
+
+APPELS PRIS PENDANT VOTRE FERMETURE : {{APPELS_HORS_HORAIRES}}
+
+{{PHRASE_CLE}}
+
+===============================================================
+
+VOTRE SEMAINE EN CHIFFRES
+
+  Appels traites        {{APPELS_TOTAL}}
+  Rendez-vous pris      {{RDV_PRIS}}
+  Urgences transmises   {{URGENCES}}
+  Messages a rappeler   {{MESSAGES_PRIS}}
+  Duree moyenne         {{DUREE_MOYENNE}}
+
+CE QUE VOS CLIENTS ONT DEMANDE
+
+{{TOP_DEMANDES_TEXTE}}
+
+{{POINT_ATTENTION_TEXTE}}
+
+---------------------------------------------------------------
+
+Une question sur ce rapport, ou un reglage a ajuster sur votre
+agent ? Repondez simplement a cet email, je m'en occupe
+personnellement.
+
+{{AUTEUR_NOM}}
+{{AUTEUR_ROLE}}
+{{AUTEUR_EMAIL}} - {{AUTEUR_TEL}}
+
+---------------------------------------------------------------
+
+Rapport genere automatiquement par AgentLumy a partir des appels
+recus sur votre ligne. Les donnees personnelles de vos clients
+sont hebergees en Europe et conservees selon les durees convenues
+au contrat.
+
+Gerer la reception de ces rapports : {{LIEN_PREFERENCES}}
+agentlumy.com

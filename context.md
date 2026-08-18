@@ -55,6 +55,40 @@ Restent les sous-traitants US qui traitent la voix en transit (Vapi, Deepgram, A
 Cartesia, Twilio, Resend) : « la base est en Europe » ne suffira pas à répondre à un garage
 qui pose la question.
 
+## 📧 Rapport hebdomadaire client (18/08/2026)
+
+    venv\Scripts\python.exe scripts/preview_rapport.py                  # exemple
+    venv\Scripts\python.exe scripts/preview_rapport.py --garage <uuid>  # données réelles
+
+**Pourquoi un email plutôt qu'un dashboard client** : un dashboard est *pull* — il faut que
+le garagiste pense à s'y connecter, et il ne le fera pas. Un email est *push* : il le reçoit,
+donc il le lit. C'est aussi un point de contact commercial hebdomadaire qui rend la
+reconduction naturelle. Coût de développement bien moindre, et **aucun problème
+d'authentification** — le dashboard actuel utilise la clé `service_role`, qui voit TOUS les
+garages : l'ouvrir à un client tel quel serait une fuite de données.
+
+**Le chiffre mis en avant : les appels pris hors horaires.** C'est ce que le garage aurait
+perdu sans l'agent. Le taux de conversion et la durée moyenne intéressent l'exploitant du
+service, pas le garagiste.
+
+Fichiers :
+- `app/templates/emails/rapport_hebdomadaire.html` — gabarit, variables `{{...}}` (même
+  convention que les prompts). Mise en page en `<table>` et styles en ligne : ni flexbox ni
+  grid ne sont fiables en messagerie. En-tête à la charte, corps clair (un fond sombre passe
+  mal à l'impression).
+- `.txt` — version texte : sans elle, l'email part plus souvent en indésirable.
+- `app/services/weekly_report.py` — calcul des indicateurs + rendu + envoi.
+- `scripts/preview_rapport.py` — aperçu dans le navigateur, **sans rien envoyer**.
+
+Signé nominativement (Damien Lauger, « Votre interlocuteur AgentLumy ») : un garagiste
+répond à quelqu'un, pas à « l'équipe ». Téléphone via `--tel` ou le paramètre `auteur`.
+
+Le bloc « À vérifier » n'apparaît **que** s'il y a une urgence ou un message en attente :
+une alerte inventée chaque semaine perd tout pouvoir d'alerte.
+
+⏳ Reste à faire : brancher l'envoi sur Cloud Scheduler (3ᵉ tâche gratuite, lundi matin) et
+ajouter une préférence de désinscription par garage.
+
 ### Ce qui reste — SANS dépense (faisable maintenant)
 - **Étape 12** : latence ✅ (122 ms médiane, −23 %) et prompts ✅ audités. Reste le coût
   réel par appel, qui demande de vrais appels → après souscription.

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  AgentLumy — Rapport hebdomadaire adressé au garage client
+  ═══════════════════════════════════════════════════════════════════════════
+
+  RÉUTILISATION
+  Remplacer les variables {{...}} ci-dessous. Même convention que les prompts
+  (app/prompts/templates/), pour n'avoir qu'un seul mécanisme dans le projet.
+
+    Garage      {{GARAGE_NAME}} {{GARAGE_CONTACT}}
+    Période     {{PERIODE_DEBUT}} {{PERIODE_FIN}}
+    KPIs        {{APPELS_TOTAL}} {{APPELS_HORS_HORAIRES}} {{RDV_PRIS}}
+                {{URGENCES}} {{MESSAGES_PRIS}} {{DUREE_MOYENNE}}
+    Analyse     {{PHRASE_CLE}} {{TOP_DEMANDES}} {{POINT_ATTENTION}}
+    Signature   {{AUTEUR_NOM}} {{AUTEUR_ROLE}} {{AUTEUR_EMAIL}} {{AUTEUR_TEL}}
+
+  CONTRAINTES EMAIL — ne pas « moderniser » sans vérifier le rendu :
+  • mise en page en <table> : ni flexbox ni grid ne sont fiables en messagerie ;
+  • styles en ligne : plusieurs clients suppriment les feuilles de style ;
+  • largeur 600 px : au-delà, coupé sur mobile et dans les volets de lecture ;
+  • en-tête sombre à la charte, corps clair : un fond sombre intégral passe mal
+    à l'impression et sur les clients qui forcent leurs propres couleurs.
+
+  LE CHIFFRE QUI VEND : « appels hors horaires ». C'est ce que le garage aurait
+  perdu sans l'agent. Il est donc mis en avant, pas noyé dans les autres KPIs.
+-->
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Votre semaine avec Lumy — {{GARAGE_NAME}}</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f4f5; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+  <!-- Texte d'aperçu : ce que la boîte mail affiche avant ouverture -->
+  <div style="display:none; max-height:0; overflow:hidden; opacity:0;">
+    {{APPELS_HORS_HORAIRES}} appels pris pendant votre fermeture cette semaine.
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f5; padding:24px 12px;">
+    <tr>
+      <td align="center">
+
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px; max-width:100%; background-color:#ffffff; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+
+          <!-- ─── En-tête (charte AgentLumy : carbone + ambre) ─── -->
+          <tr>
+            <td style="background-color:#101214; padding:28px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td>
+                    <span style="display:inline-block; width:9px; height:9px; background-color:#ffb300; border-radius:50%; margin-right:8px;"></span>
+                    <span style="color:#f2efe8; font-size:18px; font-weight:700; letter-spacing:-0.2px;">AgentLumy</span>
+                  </td>
+                  <td align="right">
+                    <span style="color:#9aa3ad; font-size:12px; text-transform:uppercase; letter-spacing:1px;">Rapport hebdomadaire</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- ─── Titre et période ─── -->
+          <tr>
+            <td style="padding:32px 32px 8px 32px;">
+              <h1 style="margin:0 0 6px 0; font-size:22px; font-weight:650; color:#101214; letter-spacing:-0.3px;">
+                {{GARAGE_NAME}}
+              </h1>
+              <p style="margin:0; font-size:14px; color:#6b7280;">
+                Du {{PERIODE_DEBUT}} au {{PERIODE_FIN}}
+              </p>
+            </td>
+          </tr>
+
+          <!-- ─── Le chiffre qui porte la valeur ─── -->
+          <tr>
+            <td style="padding:24px 32px 8px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                     style="background-color:#fffaf0; border-left:4px solid #ffb300; border-radius:6px;">
+                <tr>
+                  <td style="padding:20px 24px;">
+                    <p style="margin:0 0 4px 0; font-size:13px; color:#92400e; text-transform:uppercase; letter-spacing:0.5px; font-weight:600;">
+                      Appels pris pendant votre fermeture
+                    </p>
+                    <p style="margin:0 0 8px 0; font-size:38px; font-weight:700; color:#101214; line-height:1;">
+                      {{APPELS_HORS_HORAIRES}}
+                    </p>
+                    <p style="margin:0; font-size:14px; color:#4b5563; line-height:1.5;">
+                      {{PHRASE_CLE}}
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- ─── KPIs détaillés (2 colonnes en table : fiable partout) ─── -->
+          <tr>
+            <td style="padding:16px 32px 8px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td width="50%" style="padding:12px 8px 12px 0;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb; border:1px solid #e5e7eb; border-radius:8px;">
+                      <tr><td style="padding:16px 18px;">
+                        <p style="margin:0 0 4px 0; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:0.4px;">Appels traités</p>
+                        <p style="margin:0; font-size:26px; font-weight:680; color:#101214;">{{APPELS_TOTAL}}</p>
+                      </td></tr>
+                    </table>
+                  </td>
+                  <td width="50%" style="padding:12px 0 12px 8px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb; border:1px solid #e5e7eb; border-radius:8px;">
+                      <tr><td style="padding:16px 18px;">
+                        <p style="margin:0 0 4px 0; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:0.4px;">Rendez-vous pris</p>
+                        <p style="margin:0; font-size:26px; font-weight:680; color:#0ca30c;">{{RDV_PRIS}}</p>
+                      </td></tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td width="50%" style="padding:0 8px 12px 0;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb; border:1px solid #e5e7eb; border-radius:8px;">
+                      <tr><td style="padding:16px 18px;">
+                        <p style="margin:0 0 4px 0; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:0.4px;">Urgences transmises</p>
+                        <p style="margin:0; font-size:26px; font-weight:680; color:#d03b3b;">{{URGENCES}}</p>
+                      </td></tr>
+                    </table>
+                  </td>
+                  <td width="50%" style="padding:0 0 12px 8px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb; border:1px solid #e5e7eb; border-radius:8px;">
+                      <tr><td style="padding:16px 18px;">
+                        <p style="margin:0 0 4px 0; font-size:12px; color:#6b7280; text-transform:uppercase; letter-spacing:0.4px;">Messages à rappeler</p>
+                        <p style="margin:0; font-size:26px; font-weight:680; color:#101214;">{{MESSAGES_PRIS}}</p>
+                      </td></tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- ─── Nature des demandes ─── -->
+          <tr>
+            <td style="padding:16px 32px 8px 32px;">
+              <h2 style="margin:0 0 12px 0; font-size:15px; font-weight:650; color:#101214;">
+                Ce que vos clients ont demandé
+              </h2>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px; color:#374151;">
+                {{TOP_DEMANDES}}
+              </table>
+              <p style="margin:14px 0 0 0; font-size:13px; color:#6b7280;">
+                Durée moyenne d'un appel : <strong style="color:#374151;">{{DUREE_MOYENNE}}</strong>
+              </p>
+            </td>
+          </tr>
+
+          <!-- ─── Point d'attention (bloc conditionnel : vider si rien à dire) ─── -->
+          <tr>
+            <td style="padding:16px 32px 8px 32px;">
+              {{POINT_ATTENTION}}
+            </td>
+          </tr>
+
+          <!-- ─── Signature ─── -->
+          <tr>
+            <td style="padding:24px 32px 8px 32px; border-top:1px solid #e5e7eb;">
+              <p style="margin:0 0 16px 0; font-size:14px; color:#374151; line-height:1.6;">
+                Une question sur ce rapport, ou un réglage à ajuster sur votre agent ?
+                Répondez simplement à cet email, je m'en occupe personnellement.
+              </p>
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="padding-right:14px; vertical-align:top;">
+                    <div style="width:44px; height:44px; background-color:#101214; border-radius:50%; text-align:center; line-height:44px; color:#ffb300; font-size:17px; font-weight:700;">
+                      {{AUTEUR_INITIALES}}
+                    </div>
+                  </td>
+                  <td style="vertical-align:top;">
+                    <p style="margin:0; font-size:15px; font-weight:650; color:#101214;">{{AUTEUR_NOM}}</p>
+                    <p style="margin:2px 0 0 0; font-size:13px; color:#6b7280;">{{AUTEUR_ROLE}}</p>
+                    <p style="margin:6px 0 0 0; font-size:13px; color:#6b7280;">
+                      <a href="mailto:{{AUTEUR_EMAIL}}" style="color:#b45309; text-decoration:none;">{{AUTEUR_EMAIL}}</a>
+                      &nbsp;·&nbsp; {{AUTEUR_TEL}}
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- ─── Pied de page ─── -->
+          <tr>
+            <td style="padding:24px 32px 28px 32px;">
+              <p style="margin:0; font-size:11px; color:#9ca3af; line-height:1.6;">
+                Rapport généré automatiquement par AgentLumy à partir des appels reçus sur
+                votre ligne. Les données personnelles de vos clients sont hébergées en Europe
+                et conservées selon les durées convenues au contrat.<br>
+                <a href="{{LIEN_PREFERENCES}}" style="color:#9ca3af; text-decoration:underline;">Gérer la réception de ces rapports</a>
+                &nbsp;·&nbsp;
+                <a href="https://agentlumy.com" style="color:#9ca3af; text-decoration:underline;">agentlumy.com</a>
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+        <p style="margin:16px 0 0 0; font-size:11px; color:#9ca3af;">
+          AgentLumy — assistant vocal pour garages et dépanneurs
+        </p>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>

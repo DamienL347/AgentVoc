@@ -123,3 +123,6 @@ site/
 
 # Sauvegardes de configuration Vapi (contiennent les prompts systeme)
 backups/
+
+# Apercus de rapports (peuvent contenir des donnees clients)
+previews/
