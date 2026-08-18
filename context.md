@@ -9,7 +9,7 @@
 > de bord est la **vue d'ensemble** ; le détail de chaque point est dans les sections
 > correspondantes. Tout est poussé sur `origin/main` (dépôt `DamienL347/AgentVoc`).
 
-**Suite de tests : 140 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
+**Suite de tests : 148 verts** (unitaires + intégration rejouée contre la vraie base Supabase,
 fournisseurs simulés — aucun coût, aucun SMS réel).
 
 ### Ce qui est fait et validé sans dépense
@@ -40,6 +40,21 @@ prestation en production :
    RIEN faire (ni agenda, ni RDV, ni transfert). Le plus grave des cinq.
 6. `dispatch_intervention()` — outil inexistant ordonné au prompt dépanneur.
 
+### 🇫🇷 Décision produit : V1 exclusivement française (18/08/2026)
+Cible = garages français. **Le multilingue est renvoyé à une V2/V3**, quand un besoin réel
+sera remonté par un client — pas avant. Conséquences assumées :
+- STT Deepgram figé sur `language: fr`, prompts et messages rédigés en français ;
+- le cas « client non francophone » sort du périmètre V1 (il figurait en « après testeurs ») ;
+- verrouillé par `tests/integration/test_experience_francaise.py` (8 tests) qui contrôle ce
+  que le client **entend réellement** : messages des outils, SMS, rappels, créneaux
+  (« lundi 17 août à 9h », jamais de format anglo-saxon), messages fixes de l'assistant.
+  C'est ainsi qu'on avait attrapé le « Goodbye. » en fin d'appel.
+
+**Hébergement : base Supabase en Europe** ✅ — point RGPD principal levé (voir `docs/RGPD.md`).
+Restent les sous-traitants US qui traitent la voix en transit (Vapi, Deepgram, Anthropic,
+Cartesia, Twilio, Resend) : « la base est en Europe » ne suffira pas à répondre à un garage
+qui pose la question.
+
 ### Ce qui reste — SANS dépense (faisable maintenant)
 - **Étape 12** : latence ✅ (122 ms médiane, −23 %) et prompts ✅ audités. Reste le coût
   réel par appel, qui demande de vrais appels → après souscription.
@@ -47,8 +62,8 @@ prestation en production :
   simultanés. À arbitrer avant plusieurs clients actifs (voir section étape 12).
 - **RGPD** : partie technique ✅ (voir `docs/RGPD.md`). Restent des décisions non
   techniques : contrat de sous-traitance (DPA) à faire relire — **bloquant commercial**,
-  les garages le demanderont —, vérification des transferts hors UE, politique de
-  confidentialité, base légale de l'enregistrement à trancher.
+  les garages le demanderont —, transferts hors UE des sous-traitants **voix** (la base,
+  elle, est en Europe ✅), politique de confidentialité, base légale de l'enregistrement.
 
 ### Ce qui reste — AVEC dépense (reporté au mois prochain, sur décision de Damien)
 - Numéro FR dédié chez Twilio (compte payant + justificatif, délai de quelques jours).

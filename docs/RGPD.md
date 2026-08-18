@@ -88,13 +88,21 @@ données, obligations de sécurité, liste des sous-traitants ultérieurs, sort 
 en fin de contrat, assistance en cas de demande d'une personne concernée.
 
 ### 4.2 Transferts hors UE — point à ne pas négliger
-Plusieurs sous-traitants sont **américains** : Vapi, Deepgram, Anthropic, Cartesia,
-Twilio, Resend. Les conversations de clients français y transitent.
 
-À vérifier pour chacun : adhésion au *Data Privacy Framework* ou clauses contractuelles
-types, et localisation de l'hébergement. Supabase permet de choisir une région UE — **à
-confirmer pour le projet actuel**. C'est le point sur lequel un garage prudent (ou son
-comptable) posera des questions.
+**✅ La base de données est en Europe.** Confirmé par Damien, et cohérent avec la
+vérification technique : le serveur `db.<ref>.supabase.co` résout vers `2a05:d014:…`,
+un bloc RIPE/AWS européen. C'est le point le plus important, puisque la base contient
+**toutes** les données (appels, transcriptions, clients, RDV).
+
+> Le `cf-ray: …-CDG` de l'API n'est **pas** une preuve : il indique le point de présence
+> Cloudflare le plus proche de celui qui interroge, pas l'emplacement de la base.
+> Pour la région exacte : Supabase → Project Settings → General → Region.
+
+Restent les sous-traitants **américains** qui traitent la voix et le texte en transit :
+Vapi, Deepgram, Anthropic, Cartesia, Twilio, Resend. À vérifier pour chacun : adhésion
+au *Data Privacy Framework* ou clauses contractuelles types. C'est le point sur lequel un
+garage prudent posera des questions — et la réponse « la base est en Europe » ne suffit
+pas, puisque l'audio transite par les États-Unis.
 
 ### 4.3 Politique de confidentialité
 À publier sur agentlumy.com et à fournir aux garages pour leurs propres clients.
