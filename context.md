@@ -995,10 +995,28 @@ dashboard : le désactiver vide cette colonne. Choix retenu : **activé par déf
 piloté par `VAPI_ENABLE_SUMMARY` pour que l'arbitrage coût / visibilité reste explicite.
 `successEvaluationPlan` reste désactivé — analyse facturée que rien n'exploite.
 
-### Confirmation du bug de la veille, en conditions réelles
-Les 5 assistants présents chez Vapi ont **`outils attachés : 0`**. Le correctif d'hier
-(`ensure_tools` + `model.toolIds`) ne s'appliquera qu'aux **nouveaux** assistants : les
-existants doivent être recréés ou mis à jour pour recevoir les outils.
+### ✅ Migration des assistants existants (18/08/2026)
+Les 5 assistants avaient **0 outil**. Le correctif ne valant que pour les nouveaux, les
+existants ont été mis à jour :
+
+    venv\Scripts\python.exe scripts/migrate_vapi_assistants.py           # simulation
+    venv\Scripts\python.exe scripts/migrate_vapi_assistants.py --apply   # applique
+
+**Résultat vérifié** : les 3 assistants d'onboarding ont désormais 10 outils, la bonne
+voix, `temperature 0.4`, `startSpeakingPlan`, les messages en français et le résumé activé.
+**Leurs prompts systèmes sont intacts** (9557 / 9535 / 9538 caractères, inchangés).
+
+Trois précautions dans le script :
+- **simulation par défaut** — `--apply` requis pour écrire ;
+- **sauvegarde horodatée** dans `backups/` avant toute modification (Vapi n'a pas
+  d'historique ; dossier non versionné car il contient les prompts) ;
+- **le prompt est préservé** : Vapi remplace l'objet `model` en entier, donc envoyer
+  `{"toolIds": …}` seul effacerait `model.messages`. Le script relit l'existant et ne
+  change que les champs voulus.
+
+Les assistants **sans `garage_id`** (« Lumy », réglé à la main, et un test OpenAI) sont
+**ignorés par défaut** : Lumy sert de référence. `--inclure-manuels` ou `--id` pour le
+traiter volontairement — utile si tu veux tester Lumy avec les outils attachés.
 
 Tests : `tests/unit/test_vapi_assistant_config.py` (10). **140 tests verts.**
 

@@ -120,3 +120,6 @@ desktop.ini
 # ==========================================
 docs/_build/
 site/
+
+# Sauvegardes de configuration Vapi (contiennent les prompts systeme)
+backups/
